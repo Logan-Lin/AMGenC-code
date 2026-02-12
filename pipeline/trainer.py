@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
+import numpy as np
 import torch
+from ase.io import write as ase_write
 from torch.utils.data import DataLoader
 
 from db import LogEntry, Run
@@ -25,6 +27,47 @@ def load_checkpoint(model: torch.nn.Module, run_id: str, epoch: int):
     return ckpt["epoch"]
 
 
+def save_forward_trajectory(
+    batch,
+    flow_matcher: FlowMatcher,
+    n_steps: int,
+    output_dir: str,
+):
+    """Save forward (noising) trajectory for a batch of samples."""
+    traj_dir = os.path.join(output_dir, "train_traj")
+    os.makedirs(traj_dir, exist_ok=True)
+
+    device = batch.get_positions().device
+    source = flow_matcher.sample_source(batch)
+    clean_positions = batch.get_positions()
+
+    batch_indices = batch.get_batch_indices()
+    t_shape = [-1] + [1] * (len(clean_positions.shape) - 1)
+
+    timesteps = np.linspace(1, 0, n_steps + 1)
+    trajectory = []
+
+    for t_val in timesteps:
+        t_atom = torch.full((batch.get_num_atoms(),), t_val, dtype=torch.float, device=device).view(t_shape)
+        flow_positions = flow_matcher.pos_path.interpolate(source, clean_positions, t_atom)
+
+        kwargs = dict(positions=flow_positions)
+        if flow_matcher.el_path is not None:
+            clean_emb = batch.get_element_emb()
+            noise_emb = source.get_element_emb()
+            flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
+            kwargs["element_emb"] = flow_el
+            kwargs["elements"] = flow_matcher.element_embedding.unembed(flow_el)
+
+        trajectory.append(batch.update_attrs(**kwargs))
+
+    for i, _ in enumerate(batch.to_samples()):
+        traj_atoms = []
+        for step_batch in trajectory:
+            traj_atoms.append(step_batch.to_samples()[i].back_to_cell().to_ase_atoms())
+        ase_write(os.path.join(traj_dir, f"{i:05d}.extxyz"), traj_atoms)
+
+
 def train(
     model: torch.nn.Module,
     flow_matcher: FlowMatcher,
@@ -36,6 +79,8 @@ def train(
     num_epochs = cfg.train_epoch
     lr = cfg.lr
     save_per_epoch = cfg.save_per_epoch
+    save_trajectory = cfg.save_trajectory
+    traj_n_steps = cfg.traj_n_steps
     start_epoch = 0
 
     if cfg.use_checkpoint:
@@ -46,6 +91,16 @@ def train(
     model.train()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    output_dir = os.path.join("outputs", run.id)
+    os.makedirs(output_dir, exist_ok=True)
+
+    if save_trajectory:
+        first_batch = next(iter(train_dataloader)).to(device)
+        if flow_matcher.element_embedding is not None:
+            el_emb = flow_matcher.element_embedding.embed(first_batch.get_elements())
+            first_batch = first_batch.update_attrs(element_emb=el_emb)
+        save_forward_trajectory(first_batch, flow_matcher, traj_n_steps, output_dir)
 
     for epoch in range(start_epoch, num_epochs):
         epoch_start = datetime.now(timezone.utc)

@@ -21,7 +21,6 @@
             for host in $REMOTE_HOSTS; do
               echo "Syncing to $host..."
               rsync -avhP \
-                --ignore-times \
                 --perms \
                 --timeout=120 \
                 -e "ssh -o ServerAliveInterval=60 -o ServerAliveCountMax=3" \

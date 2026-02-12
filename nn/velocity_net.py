@@ -16,11 +16,11 @@ class EgnnVelocityNet(nn.Module):
         d_cond: int = 0,
         d_cond_embed: int = 0,
         hidden_nf: int = 128,
-        n_layers: int = 4,
-        n_coords: int = 1,
-        coords_range: float = 15.0,
-        normalization_factor: int = 100,
-        tanh: bool = True,
+        n_layers: int = 8,
+        n_coords: int = 8,
+        coords_range: float = 6.0,
+        normalization_factor: float = 40.0,
+        tanh: bool = False,
         residual: bool = True,
     ):
         super().__init__()
