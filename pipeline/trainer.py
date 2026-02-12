@@ -47,14 +47,6 @@ def train(
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # Gather property names and stats from dataset config
-    property_names = []
-    property_stats = {}
-    if cfg.dataset.properties:
-        for p in cfg.dataset.properties:
-            property_names.append(p.name)
-            property_stats[p.name] = (p.offset, p.scale)
-
     for epoch in range(start_epoch, num_epochs):
         epoch_start = datetime.now(timezone.utc)
         epoch_loss = 0.0
@@ -71,11 +63,7 @@ def train(
             t = flow_matcher.sample_t(batch)
             flow_batch, (v_pos_target, v_el_target) = flow_matcher.compute_flow(batch, t)
 
-            # Condition tensor
-            cond = None
-            if property_names:
-                cond = batch.get_condition_tensor(property_names, property_stats)
-
+            cond = batch.cond
             v_pos_pred, v_el_pred = model(flow_batch, t, cond=cond)
 
             # Per-sample MSE loss for positions

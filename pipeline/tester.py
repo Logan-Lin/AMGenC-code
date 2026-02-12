@@ -36,14 +36,6 @@ def test(
         traj_dir = os.path.join(output_dir, "infer_traj")
         os.makedirs(traj_dir, exist_ok=True)
 
-    # Gather property names and stats from dataset config
-    property_names = []
-    property_stats = {}
-    if cfg.dataset.properties:
-        for p in cfg.dataset.properties:
-            property_names.append(p.name)
-            property_stats[p.name] = (p.offset, p.scale)
-
     all_atoms = []
     is_first_batch = True
     infer_start = datetime.now(timezone.utc)
@@ -52,16 +44,12 @@ def test(
         for batch in test_dataloader:
             batch = batch.to(device)
 
-            # Embed elements for condition building
+            # Embed elements
             if flow_matcher.element_embedding is not None:
                 el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
                 batch = batch.update_attrs(element_emb=el_emb)
 
-            # Condition tensor
-            cond = None
-            if property_names:
-                cond = batch.get_condition_tensor(property_names, property_stats)
-
+            cond = batch.cond
             source = flow_matcher.sample_source(batch)
             trajectory = flow_matcher.generate(source, n_steps, model, cond=cond)
 

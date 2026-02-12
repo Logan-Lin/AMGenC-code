@@ -27,16 +27,15 @@ class Sample:
 
     neighborlist: Optional[Neighborlist] = field(default=None, repr=False)
     element_emb: Optional[torch.FloatTensor] = field(default=None, repr=False)
-    properties: dict[str, float] = field(default_factory=dict)
+    cond: Optional[torch.FloatTensor] = field(default=None, repr=False)
 
     @staticmethod
-    def from_ase_atoms(atoms: AseAtoms, properties: dict[str, float] | None = None) -> Sample:
+    def from_ase_atoms(atoms: AseAtoms) -> Sample:
         return Sample(
             elements=torch.tensor(atoms.get_atomic_numbers(), dtype=torch.long),
             positions=torch.tensor(atoms.get_positions(), dtype=torch.float),
             lattice=torch.tensor(np.array(atoms.get_cell(complete=True)), dtype=torch.float),
             pbc=tuple(atoms.get_pbc().tolist()),
-            properties=properties or {},
         )
 
     def to_ase_atoms(self) -> AseAtoms:
@@ -59,6 +58,7 @@ class Sample:
             lattice=self.lattice.to(device),
             neighborlist=nl,
             element_emb=_mv(self.element_emb),
+            cond=_mv(self.cond),
         )
 
     def update_attrs(self, **kwargs) -> Sample:
@@ -118,7 +118,9 @@ class Batch:
         batch_indices_list = []
         num_atoms_per_sample = []
         element_emb_list = []
+        cond_list = []
         has_emb = all(s.element_emb is not None for s in samples)
+        has_cond = all(s.cond is not None for s in samples)
 
         for i, s in enumerate(samples):
             n = s.get_num_atoms()
@@ -129,6 +131,8 @@ class Batch:
             num_atoms_per_sample.append(n)
             if has_emb:
                 element_emb_list.append(s.element_emb)
+            if has_cond:
+                cond_list.append(s.cond)
 
         self.elements = torch.cat(elements_list)
         self.positions = torch.cat(positions_list)
@@ -137,6 +141,7 @@ class Batch:
         self.batch_indices = torch.cat(batch_indices_list)
         self.num_atoms_per_sample = num_atoms_per_sample
         self.element_emb = torch.cat(element_emb_list) if has_emb else None
+        self.cond = torch.stack(cond_list) if has_cond else None
 
     def update_attrs(self, **kwargs) -> Batch:
         per_atom_keys = {"positions", "elements", "element_emb"}
@@ -172,6 +177,9 @@ class Batch:
 
     def get_element_emb(self) -> Optional[torch.FloatTensor]:
         return self.element_emb
+
+    def get_cond(self) -> Optional[torch.FloatTensor]:
+        return self.cond
 
     def get_batch_size(self) -> int:
         return len(self.samples)
@@ -222,36 +230,11 @@ class Batch:
             offset += n
         return torch.cat(velocities, dim=0)
 
-    def get_condition_tensor(
-        self,
-        property_names: list[str],
-        property_stats: dict[str, tuple[float, float]],
-    ) -> torch.FloatTensor:
-        """Build (B, d_cond) normalized condition tensor from sample properties.
-
-        Args:
-            property_names: ordered list of property keys to include.
-            property_stats: {name: (offset, scale)} for normalization: (value - offset) / scale.
-
-        Returns:
-            (batch_size, len(property_names)) float tensor on same device as positions.
-        """
-        device = self.positions.device
-        B = self.get_batch_size()
-        d = len(property_names)
-        cond = torch.zeros(B, d, device=device)
-        for i, s in enumerate(self.samples):
-            for j, name in enumerate(property_names):
-                val = s.properties.get(name, 0.0)
-                offset, scale = property_stats.get(name, (0.0, 1.0))
-                cond[i, j] = (val - offset) / scale
-        return cond
-
 
 class MaterialDataset(Dataset):
     """Dataset of material samples loaded from extxyz files with optional property JSONs."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, properties: list | None = None):
         super().__init__()
         files = sorted(glob.glob(os.path.join(path, "*.extxyz")))
         if len(files) == 0:
@@ -266,17 +249,26 @@ class MaterialDataset(Dataset):
             for atoms in frames:
                 samples.append(Sample.from_ase_atoms(atoms))
 
-        # Load and merge property JSON files
+        # Load and merge property JSON files, then precompute condition vectors
         json_files = sorted(glob.glob(os.path.join(path, "*.json")))
-        for jf in json_files:
-            with open(jf) as fh:
-                prop_list = json.load(fh)
-            if len(prop_list) != len(samples):
-                raise ValueError(
-                    f"Property file {jf} has {len(prop_list)} entries but dataset has {len(samples)} samples"
-                )
-            for i, prop_dict in enumerate(prop_list):
-                samples[i].properties.update(prop_dict)
+        if json_files:
+            raw_props: list[dict[str, float]] = [{} for _ in samples]
+            for jf in json_files:
+                with open(jf) as fh:
+                    prop_list = json.load(fh)
+                if len(prop_list) != len(samples):
+                    raise ValueError(
+                        f"Property file {jf} has {len(prop_list)} entries but dataset has {len(samples)} samples"
+                    )
+                for i, prop_dict in enumerate(prop_list):
+                    raw_props[i].update(prop_dict)
+
+            if properties:
+                for i, s in enumerate(samples):
+                    s.cond = torch.tensor([
+                        (raw_props[i].get(p.name, 0.0) - p.offset) / p.scale
+                        for p in properties
+                    ], dtype=torch.float)
 
         self.samples = samples
 
@@ -315,7 +307,7 @@ def create_dataloader(dataset_cfg, device: str, shuffle: bool = False) -> DataLo
     Returns:
         Configured DataLoader instance.
     """
-    dataset = MaterialDataset(path=dataset_cfg.path)
+    dataset = MaterialDataset(path=dataset_cfg.path, properties=dataset_cfg.properties)
     collate_fn = MaterialCollateFn(device=device, init_r_cut=dataset_cfg.init_r_cut)
     return DataLoader(dataset, batch_size=dataset_cfg.batch_size, shuffle=shuffle, collate_fn=collate_fn)
 
@@ -324,4 +316,18 @@ if __name__ == "__main__":
     ds = MaterialDataset("data/bmp-sample")
     print(f"Dataset size: {len(ds)}")
     s = ds[0]
-    print(f"elements={s.elements.shape}, positions={s.positions.shape}, properties={s.properties}")
+    print(f"elements={s.elements.shape}, positions={s.positions.shape}, cond={s.cond}")
+
+    # Test with property preprocessing
+    from db import Property
+    props = [
+        Property(name="E [GPa]", offset=75.6612144972, scale=16.3364790889),
+        Property(name="G [GPa]", offset=30.9556123130, scale=6.4167374512),
+    ]
+    ds2 = MaterialDataset("data/bmp-sample", properties=props)
+    print(f"cond shape: {ds2[0].cond.shape}, values: {ds2[0].cond}")
+
+    # Test Batch stacking
+    from data import Batch
+    batch = Batch([ds2[0], ds2[1]])
+    print(f"batch cond: {batch.cond.shape}, values:\n{batch.cond}")

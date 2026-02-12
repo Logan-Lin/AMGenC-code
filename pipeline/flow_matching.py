@@ -188,26 +188,22 @@ class FlowMatcher:
 if __name__ == "__main__":
     import os, sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from data import Sample, Batch
+    from data import MaterialDataset, Batch
+    from db import Property
     from nn.layers import OneHotElementEmbedding
 
-    elements = ["Si", "O"]
+    elements = ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn"]
+    props = [
+        Property(name="E [GPa]", offset=75.6612144972, scale=16.3364790889),
+        Property(name="G [GPa]", offset=30.9556123130, scale=6.4167374512),
+    ]
+    ds = MaterialDataset("data/bmp-sample", properties=props)
+
     el_emb = OneHotElementEmbedding(elements)
     fm = FlowMatcher(element_embedding=el_emb)
 
-    # Create a fake clean batch
-    n_atoms = 10
-    lattice = torch.eye(3) * 10.0
-    samples = []
-    for _ in range(2):
-        s = Sample(
-            elements=torch.randint(0, 2, (n_atoms,)) * 6 + 8,
-            positions=torch.rand(n_atoms, 3) * 10.0,
-            lattice=lattice.clone(),
-        )
-        s = s.update_attrs(element_emb=el_emb.embed(s.elements))
-        samples.append(s)
-    batch = Batch(samples)
+    batch = Batch([ds[0], ds[1]])
+    batch = batch.update_attrs(element_emb=el_emb.embed(batch.get_elements()))
 
     # Test compute_flow
     t = fm.sample_t(batch)
@@ -220,5 +216,6 @@ if __name__ == "__main__":
     source = fm.sample_source(batch)
     print(f"source positions: {source.get_positions().shape}")
     print(f"source element_emb: {source.get_element_emb().shape}")
+    print(f"cond: {batch.cond}")
 
     print("Flow matching tests OK")

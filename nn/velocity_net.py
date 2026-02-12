@@ -97,29 +97,28 @@ class EgnnVelocityNet(nn.Module):
 if __name__ == "__main__":
     import os, sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from data import Sample, Batch
+    from data import MaterialDataset, Batch
+    from db import Property
 
-    elements = ["Si", "O"]
+    elements = ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn"]
+    props = [
+        Property(name="E [GPa]", offset=75.6612144972, scale=16.3364790889),
+        Property(name="G [GPa]", offset=30.9556123130, scale=6.4167374512),
+    ]
+    ds = MaterialDataset("data/bmp-sample", properties=props)
+
     model = EgnnVelocityNet(
-        r_cut=5.0, elements=elements, hidden_nf=32, n_layers=2,
+        r_cut=5.0, elements=elements, d_cond=2, hidden_nf=32, n_layers=2,
     )
 
-    # Create fake samples
-    n_atoms = 10
-    lattice = torch.eye(3) * 10.0
-    samples = []
-    for _ in range(2):
-        s = Sample(
-            elements=torch.randint(0, 2, (n_atoms,)) * 6 + 8,  # O=8 or Si=14
-            positions=torch.rand(n_atoms, 3) * 10.0,
-            lattice=lattice.clone(),
-        )
-        s = s.update_attrs(element_emb=model.element_embedding.embed(s.elements))
-        samples.append(s)
+    batch = Batch([ds[0], ds[1]])
+    el_emb = model.element_embedding.embed(batch.get_elements())
+    batch = batch.update_attrs(element_emb=el_emb)
 
-    batch = Batch(samples)
     t = torch.rand(2)
-    v_pos, v_el = model(batch, t)
-    print(f"v_pos shape: {v_pos.shape}")  # (20, 3)
-    print(f"v_el shape: {v_el.shape}")    # (20, 2)
+    v_pos, v_el = model(batch, t, cond=batch.cond)
+    n_total = ds[0].get_num_atoms() + ds[1].get_num_atoms()
+    print(f"v_pos shape: {v_pos.shape}")   # ({n_total}, 3)
+    print(f"v_el shape: {v_el.shape}")     # ({n_total}, 11)
+    print(f"cond: {batch.cond}")
     print("Forward pass OK")
