@@ -205,17 +205,129 @@ if __name__ == "__main__":
     batch = Batch([ds[0], ds[1]])
     batch = batch.update_attrs(element_emb=el_emb.embed(batch.get_elements()))
 
-    # Test compute_flow
+    # --- Shape smoke tests ---
     t = fm.sample_t(batch)
     flow_batch, (v_pos, v_el) = fm.compute_flow(batch, t)
     print(f"flow positions: {flow_batch.get_positions().shape}")
     print(f"v_pos target: {v_pos.shape}")
     print(f"v_el target: {v_el.shape}")
 
-    # Test sample_source
     source = fm.sample_source(batch)
     print(f"source positions: {source.get_positions().shape}")
     print(f"source element_emb: {source.get_element_emb().shape}")
     print(f"cond: {batch.cond}")
 
-    print("Flow matching tests OK")
+    atol = 1e-5
+
+    # 1. FlowPath basic math
+    fp = FlowPath()
+    x0 = torch.randn(10, 3)
+    x1 = torch.randn(10, 3)
+
+    # Boundary: t=0 -> x0, t=1 -> x1
+    assert torch.allclose(fp.interpolate(x0, x1, 0.0), x0, atol=atol), "FlowPath t=0 boundary"
+    assert torch.allclose(fp.interpolate(x0, x1, 1.0), x1, atol=atol), "FlowPath t=1 boundary"
+
+    # Velocity = x1 - x0
+    assert torch.allclose(fp.velocity(x0, x1), x1 - x0, atol=atol), "FlowPath velocity"
+
+    # Finite difference: (interp(t+eps) - interp(t)) / eps ≈ velocity
+    eps = 0.1
+    t_val = 0.3
+    fd = (fp.interpolate(x0, x1, t_val + eps) - fp.interpolate(x0, x1, t_val)) / eps
+    assert torch.allclose(fd, fp.velocity(x0, x1), atol=1e-3), "FlowPath finite diff"
+    print("1. FlowPath basic math OK")
+
+    # 2. MaterialFlowPath PBC-aware math
+    mfp = MaterialFlowPath()
+    s = ds[0]
+    src = s.randomize_uniform()
+    target_pos = s.get_positions()
+
+    # Boundary t=0: interpolate at 0 = source positions
+    interp0 = mfp.interpolate(src, target_pos, 0.0)
+    assert torch.allclose(interp0, src.get_positions(), atol=atol), "MaterialFlowPath t=0"
+
+    # Boundary t=1: source + 1*velocity should land on target (mod PBC)
+    vel = mfp.velocity(src, target_pos)
+    arrived = src.get_positions() + vel
+    # Check via PBC: cal_velocity from arrived to target should be ~0
+    arrived_sample = s.update_attrs(positions=arrived)
+    residual = arrived_sample.cal_velocity(target_pos)
+    assert torch.allclose(residual, torch.zeros_like(residual), atol=atol), "MaterialFlowPath t=1 PBC"
+
+    # Finite difference consistency
+    t_val = 0.4
+    eps_mfp = 0.1
+    fd = (mfp.interpolate(src, target_pos, t_val + eps_mfp) - mfp.interpolate(src, target_pos, t_val)) / eps_mfp
+    assert torch.allclose(fd, vel, atol=1e-3), "MaterialFlowPath finite diff"
+    print("2. MaterialFlowPath PBC math OK")
+
+    # 3. compute_flow boundary checks
+    # At t=1: flow positions should recover clean positions (mod PBC)
+    t_one = torch.ones(batch.get_batch_size())
+    flow_b1, (vp1, ve1) = fm.compute_flow(batch, t_one)
+    residual_pos = flow_b1.cal_velocity(batch.get_positions())
+    assert torch.allclose(residual_pos, torch.zeros_like(residual_pos), atol=atol), "compute_flow t=1 positions"
+
+    # At t=1: element flow should equal clean embeddings
+    clean_emb = el_emb.embed(batch.get_elements())
+    assert torch.allclose(flow_b1.get_element_emb(), clean_emb, atol=atol), "compute_flow t=1 elements"
+
+    # At t=0: element flow should equal the noise (source)
+    t_zero = torch.zeros(batch.get_batch_size())
+    flow_b0, (vp0, ve0) = fm.compute_flow(batch, t_zero)
+    # At t=0, flow_el = (1-0)*noise + 0*clean = noise, and v_el = clean - noise
+    # So flow_el + v_el = clean
+    assert torch.allclose(flow_b0.get_element_emb() + ve0, clean_emb, atol=atol), "compute_flow t=0 el consistency"
+    print("3. compute_flow boundary checks OK")
+
+    # 4. integrate_step Euler math
+    # Mock model: constant velocity
+    const_v_pos = torch.ones_like(batch.get_positions())
+    const_v_el = torch.ones_like(el_emb.embed(batch.get_elements()))
+
+    def mock_model(sample, t, cond=None):
+        return const_v_pos, const_v_el
+
+    source_sample = fm.sample_source(batch)
+    t_cur = torch.full((batch.get_batch_size(),), 0.3)
+    dt = 0.1
+    next_s, pred_clean = fm.integrate_step(source_sample, t_cur, dt, mock_model)
+
+    # Euler: new_pos = old_pos + dt * v
+    expected_pos = source_sample.get_positions() + dt * const_v_pos
+    assert torch.allclose(next_s.get_positions(), expected_pos, atol=atol), "Euler step positions"
+
+    # Clean extrapolation: clean_pos = old_pos + (1 - t) * v
+    batch_idx = source_sample.get_batch_indices()
+    t_atom = t_cur[batch_idx].view(-1, 1)
+    expected_clean_pos = source_sample.get_positions() + (1 - t_atom) * const_v_pos
+    assert torch.allclose(pred_clean.get_positions(), expected_clean_pos, atol=atol), "Clean extrapolation positions"
+
+    # Element Euler step
+    cur_emb = source_sample.get_element_emb()
+    expected_el = cur_emb + dt * const_v_el
+    assert torch.allclose(next_s.get_element_emb(), expected_el, atol=atol), "Euler step elements"
+
+    expected_clean_el = cur_emb + (1 - t_atom) * const_v_el
+    assert torch.allclose(pred_clean.get_element_emb(), expected_clean_el, atol=atol), "Clean extrapolation elements"
+    print("4. integrate_step Euler math OK")
+
+    # 5. generate trajectory check
+    n_steps = 5
+    source_sample = fm.sample_source(batch)
+    traj = fm.generate(source_sample, n_steps, mock_model)
+
+    assert len(traj) == n_steps + 1, f"Trajectory length: {len(traj)} != {n_steps + 1}"
+
+    # With constant velocity v=1, integral from 0 to 1 gives displacement = 1*1 = 1
+    # final_pos = source_pos + 1.0 * const_v_pos
+    expected_final = source_sample.get_positions() + 1.0 * const_v_pos
+    assert torch.allclose(traj[-1].get_positions(), expected_final, atol=1e-4), "Generate final positions"
+
+    expected_final_el = source_sample.get_element_emb() + 1.0 * const_v_el
+    assert torch.allclose(traj[-1].get_element_emb(), expected_final_el, atol=1e-4), "Generate final elements"
+    print("5. generate trajectory OK")
+
+    print("\nAll flow matching math tests PASSED")
