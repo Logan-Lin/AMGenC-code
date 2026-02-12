@@ -11,8 +11,8 @@ class EgnnVelocityNet(nn.Module):
 
     def __init__(
         self,
-        r_cut: float,
         elements: list[str],
+        r_cut: float = 6.5,
         d_cond: int = 0,
         d_cond_embed: int = 0,
         hidden_nf: int = 128,

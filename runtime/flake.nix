@@ -46,6 +46,12 @@
             fi
             echo "All syncs completed successfully"
           '')
+          (writeShellScriptBin "add-run" ''
+            streamlit run helper/add_run.py
+          '')
+          (writeShellScriptBin "find-run" ''
+            streamlit run helper/find_run.py
+          '')
         ];
         shellHook = ''
           export LD_LIBRARY_PATH="${pkgs.zlib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
