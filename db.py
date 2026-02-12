@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import argparse
+import os
+import secrets
+import socket
+from datetime import datetime
+
+from dotenv import load_dotenv
+from mongoengine import (
+    Document,
+    EmbeddedDocument,
+    connect,
+    disconnect,
+)
+from mongoengine.fields import (
+    StringField,
+    IntField,
+    FloatField,
+    BooleanField,
+    DictField,
+    DateTimeField,
+    EmbeddedDocumentField,
+    EmbeddedDocumentListField,
+)
+
+
+class Property(EmbeddedDocument):
+    """Property statistics."""
+
+    name = StringField(required=True)
+    offset = FloatField(required=True)
+    scale = FloatField(required=True)
+
+
+class Dataset(EmbeddedDocument):
+    """Dataset configuration for one run."""
+
+    path = StringField(required=True)
+    batch_size = IntField(default=4)
+    properties = EmbeddedDocumentListField(Property)
+    init_r_cut = FloatField()  # padded cutoff for neighbor list construction
+
+
+class Model(EmbeddedDocument):
+    """Vector prediction model configuration."""
+
+    name = StringField(required=True)
+    kwargs = DictField()
+
+
+class ResultEntry(EmbeddedDocument):
+    """Results of a single experiment run."""
+
+    timestamp = DateTimeField(required=True)
+    metrics = DictField()
+    outputs = DictField()
+
+
+class LogEntry(EmbeddedDocument):
+    """A single log entry with timestamp and data."""
+
+    timestamp = DateTimeField(required=True)
+    epoch = IntField()
+    loss = FloatField()
+    data = DictField()
+
+
+class Trainer(EmbeddedDocument):
+    dataset = EmbeddedDocumentField(Dataset)
+    train_epoch = IntField(required=True)  # Total number of epoches to train
+    lr = FloatField(required=True)
+    save_per_epoch = IntField(default=10)
+    save_trajectory = BooleanField(default=False)  # Whether to save forward trajectory
+    traj_n_steps = IntField(default=50)  # Number of diffusion steps to use for the forward trajectory
+    use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
+    checkpoint_epoch = IntField()  # The epoch number to load from
+    checkpoint_run_id = StringField()  # Load checkpoint from another run
+
+
+class Tester(EmbeddedDocument):
+    dataset = EmbeddedDocumentField(Dataset)
+    n_steps = IntField(required=True)  # Number of denoising steps
+    save_trajectory = BooleanField(default=False)
+    use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
+    checkpoint_epoch = IntField()  # The epoch number to load from
+    checkpoint_run_id = StringField()  # Load checkpoint from another run
+
+
+class Run(Document):
+    """Run tracking document."""
+
+    meta = {"collection": "runs"}
+
+    id = StringField(primary_key=True)
+    created_at = DateTimeField(required=True)
+    started_at = DateTimeField()
+    message = StringField()  # Error message for failed runs
+    run_on = StringField()  # hostname of machine
+
+    model = EmbeddedDocumentField(Model, required=True)
+    do_train = BooleanField(default=False)  # Whether to run training
+    trainer = EmbeddedDocumentField(Trainer)
+    do_test = BooleanField(default=False)  # Whether to run testing
+    tester = EmbeddedDocumentField(Tester)
+
+    results = EmbeddedDocumentListField(ResultEntry)
+    logs = EmbeddedDocumentListField(LogEntry)
+    completed_at = DateTimeField()
+
+
+def connect_db() -> None:
+    """Connect to MongoDB using MONGO_URI from .env file."""
+    load_dotenv()
+    mongo_uri = os.getenv("MONGO_URI")
+    if not mongo_uri:
+        raise ValueError("MONGO_URI not found in environment variables")
+    connect(host=mongo_uri)
+
+
+def disconnect_db() -> None:
+    disconnect()
+
+
+def generate_experiment_id() -> str:
+    """Generate a random 16-character hex ID."""
+    return secrets.token_hex(8)

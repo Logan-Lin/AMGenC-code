@@ -1,0 +1,29 @@
+Bootstrap: docker
+From: nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+%files
+    pyproject.toml .
+
+%post -c /bin/bash
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update && apt-get install -y \
+        software-properties-common curl git
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update && apt-get install -y \
+        python3.12 python3.12-venv python3.12-dev
+    ln -sf /usr/bin/python3.12 /usr/bin/python
+
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="/root/.local/bin:$PATH"
+
+    uv venv ./venv --python /usr/bin/python3.12
+    source ./venv/bin/activate
+    uv pip install -r pyproject.toml
+
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PATH=/venv/bin:$PATH
+
+%runscript
+    /venv/bin/python "$@"

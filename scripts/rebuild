@@ -1,0 +1,16 @@
+#!/bin/bash
+
+SIF_FILE="runtime/charge-bal.sif"
+DEF_FILE="runtime/charge-bal.def"
+TMP_FILE="runtime/charge-bal.sif.tmp"
+
+echo "Building container..."
+srun --job-name="bal-rebuild" --mem=64G --time=01:00:00 singularity build --fakeroot "$TMP_FILE" "$DEF_FILE"
+
+if [ -f "$SIF_FILE" ]; then
+  echo "Removing old container..."
+  rm "$SIF_FILE"
+fi
+
+mv "$TMP_FILE" "$SIF_FILE"
+echo "Done: $SIF_FILE"
