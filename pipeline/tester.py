@@ -45,9 +45,8 @@ def test(
             batch = batch.to(device)
 
             # Embed elements
-            if flow_matcher.element_embedding is not None:
-                el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
-                batch = batch.update_attrs(element_emb=el_emb)
+            el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
+            batch = batch.update_attrs(element_emb=el_emb)
 
             cond = batch.cond
             source = flow_matcher.sample_source(batch)

@@ -51,15 +51,15 @@ def save_forward_trajectory(
         t_atom = torch.full((batch.get_num_atoms(),), t_val, dtype=torch.float, device=device).view(t_shape)
         flow_positions = flow_matcher.pos_path.interpolate(source, clean_positions, t_atom)
 
-        kwargs = dict(positions=flow_positions)
-        if flow_matcher.el_path is not None:
-            clean_emb = batch.get_element_emb()
-            noise_emb = source.get_element_emb()
-            flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
-            kwargs["element_emb"] = flow_el
-            kwargs["elements"] = flow_matcher.element_embedding.unembed(flow_el)
+        clean_emb = batch.get_element_emb()
+        noise_emb = source.get_element_emb()
+        flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
 
-        trajectory.append(batch.update_attrs(**kwargs))
+        trajectory.append(batch.update_attrs(
+            positions=flow_positions,
+            element_emb=flow_el,
+            elements=flow_matcher.element_embedding.unembed(flow_el),
+        ))
 
     for i, _ in enumerate(batch.to_samples()):
         traj_atoms = []
@@ -97,9 +97,8 @@ def train(
 
     if save_trajectory:
         first_batch = next(iter(train_dataloader)).to(device)
-        if flow_matcher.element_embedding is not None:
-            el_emb = flow_matcher.element_embedding.embed(first_batch.get_elements())
-            first_batch = first_batch.update_attrs(element_emb=el_emb)
+        el_emb = flow_matcher.element_embedding.embed(first_batch.get_elements())
+        first_batch = first_batch.update_attrs(element_emb=el_emb)
         save_forward_trajectory(first_batch, flow_matcher, traj_n_steps, output_dir)
 
     for epoch in range(start_epoch, num_epochs):
@@ -111,9 +110,8 @@ def train(
             batch = batch.to(device)
 
             # Embed elements
-            if flow_matcher.element_embedding is not None:
-                el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
-                batch = batch.update_attrs(element_emb=el_emb)
+            el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
+            batch = batch.update_attrs(element_emb=el_emb)
 
             t = flow_matcher.sample_t(batch)
             flow_batch, (v_pos_target, v_el_target) = flow_matcher.compute_flow(batch, t)
@@ -131,13 +129,12 @@ def train(
             loss = per_sample_loss.mean()
 
             # Element velocity loss
-            if v_el_target is not None and v_el_pred is not None:
-                diff_sq_el = (v_el_pred - v_el_target).pow(2).sum(dim=-1)  # (N,)
-                per_sample_el_loss = torch.zeros(flow_batch.get_batch_size(), device=device)
-                for i in range(flow_batch.get_batch_size()):
-                    mask = batch_idx == i
-                    per_sample_el_loss[i] = diff_sq_el[mask].mean()
-                loss = loss + per_sample_el_loss.mean()
+            diff_sq_el = (v_el_pred - v_el_target).pow(2).sum(dim=-1)  # (N,)
+            per_sample_el_loss = torch.zeros(flow_batch.get_batch_size(), device=device)
+            for i in range(flow_batch.get_batch_size()):
+                mask = batch_idx == i
+                per_sample_el_loss[i] = diff_sq_el[mask].mean()
+            loss = loss + per_sample_el_loss.mean()
 
             optimizer.zero_grad()
             loss.backward()

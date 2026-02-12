@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from tqdm import trange
 
 
 class FlowPath:
@@ -44,10 +43,10 @@ class FlowMatcher:
     Convention: t=0 is noise, t=1 is data. Inference integrates from t=0 to t=1.
     """
 
-    def __init__(self, element_embedding=None):
+    def __init__(self, element_embedding):
         self.element_embedding = element_embedding
         self.pos_path = MaterialFlowPath()
-        self.el_path = FlowPath() if element_embedding is not None else None
+        self.el_path = FlowPath()
 
     def sample_t(self, batch) -> torch.FloatTensor:
         """Sample uniform t in [0, 1] with shape (batch_size,)."""
@@ -60,18 +59,17 @@ class FlowMatcher:
             sample: clean Sample/Batch to match structure (lattice, num_atoms, etc.)
 
         Returns:
-            Source sample with randomized positions and (optionally) Gaussian element embeddings.
+            Source sample with randomized positions and Gaussian element embeddings.
         """
         source = sample.randomize_uniform()
-        if self.element_embedding is not None:
-            clean_emb = sample.get_element_emb()
-            if clean_emb is None:
-                clean_emb = self.element_embedding.embed(sample.get_elements())
-            noise_emb = torch.randn_like(clean_emb)
-            source = source.update_attrs(
-                element_emb=noise_emb,
-                elements=self.element_embedding.unembed(noise_emb),
-            )
+        clean_emb = sample.get_element_emb()
+        if clean_emb is None:
+            clean_emb = self.element_embedding.embed(sample.get_elements())
+        noise_emb = torch.randn_like(clean_emb)
+        source = source.update_attrs(
+            element_emb=noise_emb,
+            elements=self.element_embedding.unembed(noise_emb),
+        )
         return source
 
     def compute_flow(self, clean_batch, t):
@@ -95,20 +93,17 @@ class FlowMatcher:
         flow_positions = source_batch.get_positions() + t_atom * v_pos_target
 
         # Element flow
-        flow_el = None
-        v_el_target = None
-        if self.el_path is not None:
-            clean_emb = clean_batch.get_element_emb()
-            if clean_emb is None:
-                clean_emb = self.element_embedding.embed(clean_batch.get_elements())
-            noise_emb = torch.randn_like(clean_emb)
-            v_el_target = self.el_path.velocity(noise_emb, clean_emb)
-            flow_el = self.el_path.interpolate(noise_emb, clean_emb, t_atom)
+        clean_emb = clean_batch.get_element_emb()
+        if clean_emb is None:
+            clean_emb = self.element_embedding.embed(clean_batch.get_elements())
+        noise_emb = torch.randn_like(clean_emb)
+        v_el_target = self.el_path.velocity(noise_emb, clean_emb)
+        flow_el = self.el_path.interpolate(noise_emb, clean_emb, t_atom)
 
         flow_batch = clean_batch.update_attrs(
             positions=flow_positions,
             element_emb=flow_el,
-            elements=self.element_embedding.unembed(flow_el) if flow_el is not None else None,
+            elements=self.element_embedding.unembed(flow_el),
         )
 
         return flow_batch, (v_pos_target, v_el_target)
@@ -137,21 +132,19 @@ class FlowMatcher:
         # Clean extrapolation: x_1 = x_t + (1 - t) * v_t
         clean_positions = sample.get_positions() + (1 - t_atom) * v_pos
 
-        new_el, clean_el = None, None
-        if v_el is not None and self.element_embedding is not None:
-            cur_emb = sample.get_element_emb()
-            new_el = cur_emb + dt * v_el
-            clean_el = cur_emb + (1 - t_atom) * v_el
+        cur_emb = sample.get_element_emb()
+        new_el = cur_emb + dt * v_el
+        clean_el = cur_emb + (1 - t_atom) * v_el
 
         next_sample = sample.update_attrs(
             positions=new_positions,
             element_emb=new_el,
-            elements=self.element_embedding.unembed(new_el) if new_el is not None else None,
+            elements=self.element_embedding.unembed(new_el),
         )
         pred_clean = sample.update_attrs(
             positions=clean_positions,
             element_emb=clean_el,
-            elements=self.element_embedding.unembed(clean_el) if clean_el is not None else None,
+            elements=self.element_embedding.unembed(clean_el),
         )
 
         return next_sample, pred_clean
@@ -175,7 +168,7 @@ class FlowMatcher:
         sample = source_sample
         trajectory = [sample]
 
-        for i in trange(n_steps, desc="Generating", leave=False):
+        for i in range(n_steps):
             t_val = timesteps[i]
             dt = timesteps[i + 1] - timesteps[i]
             t_tensor = torch.full((batch_size,), t_val, dtype=torch.float, device=device)
