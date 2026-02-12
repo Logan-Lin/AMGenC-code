@@ -52,6 +52,8 @@ class EgnnVelocityNet(nn.Module):
             residual=residual,
         )
 
+        self.pos_scale = nn.Parameter(torch.tensor(1.0))
+
     def forward(self, batch, t, cond=None):
         """Forward pass predicting velocity fields.
 
@@ -85,7 +87,7 @@ class EgnnVelocityNet(nn.Module):
         h_out, x_out = self.egnn(h, positions, edges)
 
         # Position velocity: residual between input and output coordinates, mean-removed
-        v_pos = positions - x_out[:, 0, :]
+        v_pos = (positions - x_out[:, 0, :]) * self.pos_scale
         v_pos = batch.remove_mean(v_pos)
 
         # Element velocity: node output

@@ -8,7 +8,7 @@ def coord2diff(x, edge_index, norm_constant=1.0):
     row, col, offset = edge_index
     coord_diff = x[row] - x[col] - offset.unsqueeze(1)
     radial = torch.sum(coord_diff ** 2, 2).unsqueeze(2)
-    norm = torch.sqrt(radial + 1)
+    norm = torch.sqrt(radial + 0.01)
     coord_diff = coord_diff / (norm + norm_constant)
     return radial, coord_diff
 
@@ -109,7 +109,7 @@ class EquivariantUpdate(nn.Module):
         self.n_coords = n_coords
         input_edge = hidden_nf * 2 + edges_in_d
         layer = nn.Linear(hidden_nf, self.n_coords ** 2, bias=False)
-        torch.nn.init.xavier_uniform_(layer.weight, gain=0.01)
+        torch.nn.init.xavier_uniform_(layer.weight, gain=1.0)
         self.coord_mlp = nn.Sequential(
             nn.Linear(input_edge, hidden_nf),
             nn.LayerNorm(hidden_nf),
