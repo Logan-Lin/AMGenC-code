@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 from ase.symbols import symbols2numbers
 
 
@@ -265,27 +266,31 @@ class EGNN(nn.Module):
         return torch.where(r <= self.r_cut, torch.tanh(1. - r / self.r_cut) ** 2 * 2., 0.)
 
 
-class ElementEmbedding(nn.Module):
-    """Learnable embedding mapping atomic numbers to a fixed-dim vector.
+class OneHotElementEmbedding(nn.Module):
+    """Fixed one-hot embedding mapping atomic numbers to one-hot vectors.
 
     Args:
         elements: List of element symbols (e.g. ['Si', 'O']) or atomic numbers.
-        d_embed: Embedding dimension. Defaults to len(elements).
     """
 
-    def __init__(self, elements, d_embed=None):
+    def __init__(self, elements):
         super().__init__()
         self.n_elements = len(elements)
-        self.dim = d_embed if d_embed is not None else self.n_elements
+        self.dim = self.n_elements
 
         element_idx = torch.full((120,), -1, dtype=torch.long)
+        inverse_element_idx = torch.zeros(self.n_elements, dtype=torch.long)
         for i_el, el in enumerate(elements):
             z = symbols2numbers(el)[0] if isinstance(el, str) else el
             element_idx[z] = i_el
+            inverse_element_idx[i_el] = z
         self.register_buffer('element_idx', element_idx)
+        self.register_buffer('inverse_element_idx', inverse_element_idx)
 
-        self.embedding = nn.Embedding(self.n_elements, self.dim)
+    def embed(self, atomic_numbers):
+        """atomic_numbers: (N,) LongTensor → (N, n_elements) one-hot float tensor."""
+        return nn.functional.one_hot(self.element_idx[atomic_numbers], self.n_elements).float()
 
-    def forward(self, atomic_numbers):
-        """atomic_numbers: (N,) LongTensor of atomic numbers."""
-        return self.embedding(self.element_idx[atomic_numbers])
+    def unembed(self, element_emb):
+        """element_emb: (N, n_elements) float tensor → (N,) atomic numbers."""
+        return self.inverse_element_idx[torch.argmax(element_emb, dim=1)]
