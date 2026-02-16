@@ -236,18 +236,14 @@ class MaterialDataset(Dataset):
 
     def __init__(self, path: str, properties: list | None = None):
         super().__init__()
-        files = sorted(glob.glob(os.path.join(path, "*.extxyz")))
-        if len(files) == 0:
-            raise FileNotFoundError(f"No .extxyz files found in {path}")
+        atoms_file = os.path.join(path, "atoms.extxyz")
+        if not os.path.isfile(atoms_file):
+            raise FileNotFoundError(f"No atoms.extxyz found in {path}")
 
-        # Load all frames from all extxyz files
-        samples: list[Sample] = []
-        for f in files:
-            frames = ase_read(f, index=":")
-            if not isinstance(frames, list):
-                frames = [frames]
-            for atoms in frames:
-                samples.append(Sample.from_ase_atoms(atoms))
+        frames = ase_read(atoms_file, index=":")
+        if not isinstance(frames, list):
+            frames = [frames]
+        samples: list[Sample] = [Sample.from_ase_atoms(atoms) for atoms in frames]
 
         # Load and merge property JSON files, then precompute condition vectors
         json_files = sorted(glob.glob(os.path.join(path, "*.json")))

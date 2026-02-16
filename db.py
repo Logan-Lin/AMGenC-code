@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import secrets
 import socket
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -13,6 +15,7 @@ from mongoengine import (
     connect,
     disconnect,
 )
+from pymongo.errors import AutoReconnect, ConnectionFailure, NetworkTimeout
 from mongoengine.fields import (
     StringField,
     IntField,
@@ -122,6 +125,24 @@ def connect_db() -> None:
 
 def disconnect_db() -> None:
     disconnect()
+
+
+logger = logging.getLogger(__name__)
+
+
+def save_run(run: Run, retries: int = 5, base_delay: float = 5.0) -> None:
+    """Save a Run document with retry on transient MongoDB errors."""
+    transient = (AutoReconnect, ConnectionFailure, NetworkTimeout, OSError)
+    for attempt in range(1, retries + 1):
+        try:
+            run.save()
+            return
+        except transient as e:
+            if attempt == retries:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            logger.warning("MongoDB save failed (attempt %d/%d): %s. Retrying in %ds...", attempt, retries, e, delay)
+            time.sleep(delay)
 
 
 def generate_experiment_id() -> str:

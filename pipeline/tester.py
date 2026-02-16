@@ -8,7 +8,7 @@ import torch
 from ase.io import write as ase_write
 from torch.utils.data import DataLoader
 
-from db import ResultEntry, Run
+from db import ResultEntry, Run, save_run
 from pipeline.flow_matching import FlowMatcher
 from pipeline.trainer import load_checkpoint
 
@@ -116,7 +116,7 @@ def test(
         metrics={"infer_time": infer_time},
         outputs={"num_samples": len(all_atoms)},
     ))
-    run.save()
+    save_run(run)
 
 
 def _plot_charge_convergence(timesteps, hard_charges, soft_charges, output_dir):

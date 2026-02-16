@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import torch
 
-from db import Run, connect_db, disconnect_db
+from db import Run, connect_db, disconnect_db, save_run
 from nn import create_model
 from nn.layers import OneHotElementEmbedding
 from pipeline import FlowMatcher, train, test
@@ -38,7 +38,7 @@ def main() -> int:
 
         run.started_at = datetime.now(timezone.utc)
         run.run_on = socket.gethostname()
-        run.save()
+        save_run(run)
 
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
@@ -63,7 +63,7 @@ def main() -> int:
             print(f"Testing completed for run {run.id}")
 
         run.completed_at = datetime.now(timezone.utc)
-        run.save()
+        save_run(run)
         print(f"Run {run.id} finished successfully")
         return 0
 
@@ -72,7 +72,7 @@ def main() -> int:
         if run is not None:
             try:
                 run.message = error_msg[:2000]
-                run.save()
+                save_run(run)
             except Exception:
                 pass
         print(f"Error: {error_msg}", file=sys.stderr)

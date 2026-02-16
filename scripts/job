@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+mkdir -p stdout
+
+EXP_ID="$1"
+GPU_TYPE="$2"
+
+if [ -n "$GPU_TYPE" ]; then
+    sbatch -J "cb-$EXP_ID" --gres="gpu:$GPU_TYPE:1" scripts/job.sbatch main.py "$EXP_ID"
+else
+    sbatch -J "cb-$EXP_ID" --gres="gpu:1" scripts/job.sbatch main.py "$EXP_ID"
+fi

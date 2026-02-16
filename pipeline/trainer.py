@@ -8,7 +8,7 @@ import torch
 from ase.io import write as ase_write
 from torch.utils.data import DataLoader
 
-from db import LogEntry, Run
+from db import LogEntry, Run, save_run
 from pipeline.flow_matching import FlowMatcher
 
 
@@ -149,7 +149,7 @@ def train(
             timestamp=datetime.now(timezone.utc), epoch=epoch + 1, loss=avg_loss,
             data={"epoch_time": epoch_time},
         ))
-        run.save()
+        save_run(run)
 
         print(f"  Epoch {epoch + 1}/{num_epochs}  loss={avg_loss:.6f}  time={epoch_time:.1f}s")
 
