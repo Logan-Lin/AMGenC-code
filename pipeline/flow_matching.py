@@ -167,15 +167,17 @@ class FlowMatcher:
 
         sample = source_sample
         trajectory = [sample]
+        pred_cleans = []
 
         for i in range(n_steps):
             t_val = timesteps[i]
             dt = timesteps[i + 1] - timesteps[i]
             t_tensor = torch.full((batch_size,), t_val, dtype=torch.float, device=device)
-            sample, _ = self.integrate_step(sample, t_tensor, dt, model, cond=cond)
+            sample, pred_clean = self.integrate_step(sample, t_tensor, dt, model, cond=cond)
             trajectory.append(sample)
+            pred_cleans.append(pred_clean)
 
-        return trajectory
+        return trajectory, pred_cleans
 
 
 if __name__ == "__main__":
@@ -310,9 +312,10 @@ if __name__ == "__main__":
     # 5. generate trajectory check
     n_steps = 5
     source_sample = fm.sample_source(batch)
-    traj = fm.generate(source_sample, n_steps, mock_model)
+    traj, pred_cleans = fm.generate(source_sample, n_steps, mock_model)
 
     assert len(traj) == n_steps + 1, f"Trajectory length: {len(traj)} != {n_steps + 1}"
+    assert len(pred_cleans) == n_steps, f"Pred cleans length: {len(pred_cleans)} != {n_steps}"
 
     # With constant velocity v=1, integral from 0 to 1 gives displacement = 1*1 = 1
     # final_pos = source_pos + 1.0 * const_v_pos

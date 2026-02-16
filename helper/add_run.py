@@ -144,7 +144,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
             min_value=1, step=1, key=f"{prefix}_batch_size",
         )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         use_init_r_cut = st.toggle(
             "Use Init R Cut",
@@ -159,6 +159,13 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
                 format="%.2f", key=f"{prefix}_init_r_cut",
                 label_visibility="collapsed",
             )
+    with col3:
+        charge_module = st.text_input(
+            "Charge Module", value="",
+            key=f"{prefix}_charge_module",
+            help="e.g. 'bmp'. Leave empty for none.",
+        )
+    charge_module = charge_module.strip() or None
 
     with st.expander("Properties (condition normalization)", expanded=False):
         properties = render_properties_section(prefix)
@@ -167,6 +174,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
         "path": path,
         "batch_size": batch_size,
         "init_r_cut": init_r_cut,
+        "charge_module": charge_module,
         "properties": properties,
     }
 
@@ -272,20 +280,25 @@ def main():
             min_value=1, step=10,
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             save_trajectory_test = st.toggle(
                 "Save Traj", value=tester_defaults.get("save_trajectory", False),
                 key="test_save_traj",
             )
         with col2:
+            analyze_trajectory_test = st.toggle(
+                "Analyze Traj", value=tester_defaults.get("analyze_trajectory", False),
+                key="test_analyze_traj",
+            )
+        with col3:
             use_checkpoint_test = st.toggle(
                 "Use Ckpt", value=tester_defaults.get("use_checkpoint", False),
                 key="test_use_ckpt",
             )
         checkpoint_epoch_test, checkpoint_run_id_test = None, None
         if use_checkpoint_test:
-            with col3:
+            with col4:
                 checkpoint_epoch_test = st.number_input(
                     "Ckpt Epoch", value=0, min_value=0, step=1,
                     key="test_ckpt_epoch",
@@ -297,6 +310,7 @@ def main():
         test_config = {
             "dataset": test_dataset, "n_steps": n_steps,
             "save_trajectory": save_trajectory_test,
+            "analyze_trajectory": analyze_trajectory_test,
             "use_checkpoint": use_checkpoint_test,
             "checkpoint_epoch": checkpoint_epoch_test,
             "checkpoint_run_id": checkpoint_run_id_test,
@@ -344,6 +358,7 @@ def main():
                     path=values["path"],
                     batch_size=values["batch_size"],
                     init_r_cut=values["init_r_cut"],
+                    charge_module=values.get("charge_module"),
                     properties=build_properties(values.get("properties", [])),
                 )
 
@@ -369,6 +384,7 @@ def main():
                     dataset=build_dataset_doc(test_config["dataset"]),
                     n_steps=test_config["n_steps"],
                     save_trajectory=test_config["save_trajectory"],
+                    analyze_trajectory=test_config["analyze_trajectory"],
                     use_checkpoint=test_config["use_checkpoint"],
                     checkpoint_epoch=test_config.get("checkpoint_epoch"),
                     checkpoint_run_id=test_config.get("checkpoint_run_id") or None,

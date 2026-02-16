@@ -289,6 +289,7 @@ def render_dataset_section(dataset):
         st.text(f"Batch Size: {dataset.batch_size}")
     with col2:
         st.text(f"Init R Cut: {dataset.init_r_cut or '-'}")
+        st.text(f"Charge Module: {dataset.charge_module or '-'}")
 
     # Properties
     if dataset.properties:
@@ -381,6 +382,7 @@ def render_run_card(run: Run, index: int):
             with col1:
                 st.text(f"N Steps: {t.n_steps}")
                 st.text(f"Save Trajectory: {t.save_trajectory}")
+                st.text(f"Analyze Trajectory: {t.analyze_trajectory}")
             with col2:
                 st.text(f"Use Checkpoint: {t.use_checkpoint}")
                 if t.use_checkpoint:

@@ -40,6 +40,7 @@ class Dataset(EmbeddedDocument):
     batch_size = IntField(default=4)
     properties = EmbeddedDocumentListField(Property)
     init_r_cut = FloatField()  # padded cutoff for neighbor list construction
+    charge_module = StringField()  # charge computation module name, e.g. "bmp"
 
 
 class Model(EmbeddedDocument):
@@ -82,6 +83,7 @@ class Tester(EmbeddedDocument):
     dataset = EmbeddedDocumentField(Dataset)
     n_steps = IntField(required=True)  # Number of denoising steps
     save_trajectory = BooleanField(default=False)
+    analyze_trajectory = BooleanField(default=False)  # Run charge analysis on pred_clean at each step
     use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
     checkpoint_epoch = IntField()  # The epoch number to load from
     checkpoint_run_id = StringField()  # Load checkpoint from another run
