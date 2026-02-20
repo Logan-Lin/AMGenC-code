@@ -23,6 +23,7 @@ from mongoengine.fields import (
     BooleanField,
     DictField,
     DateTimeField,
+    ListField,
     EmbeddedDocumentField,
     EmbeddedDocumentListField,
 )
@@ -44,6 +45,12 @@ class Dataset(EmbeddedDocument):
     properties = EmbeddedDocumentListField(Property)
     init_r_cut = FloatField()  # padded cutoff for neighbor list construction
     charge_module = StringField()  # charge computation module name, e.g. "bmp"
+
+
+class FlowMatcherConfig(EmbeddedDocument):
+    """Flow matching configuration."""
+
+    element_dist = ListField(FloatField())  # categorical probs aligned with model element list
 
 
 class Model(EmbeddedDocument):
@@ -104,6 +111,7 @@ class Run(Document):
     run_on = StringField()  # hostname of machine
 
     model = EmbeddedDocumentField(Model, required=True)
+    flow_matcher = EmbeddedDocumentField(FlowMatcherConfig)
     do_train = BooleanField(default=False)  # Whether to run training
     trainer = EmbeddedDocumentField(Trainer)
     do_test = BooleanField(default=False)  # Whether to run testing

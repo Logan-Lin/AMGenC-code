@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from torch.nn import functional as F
 
 
 class FlowPath:
@@ -43,10 +44,31 @@ class FlowMatcher:
     Convention: t=0 is noise, t=1 is data. Inference integrates from t=0 to t=1.
     """
 
-    def __init__(self, element_embedding):
+    def __init__(self, element_embedding, config=None):
         self.element_embedding = element_embedding
         self.pos_path = MaterialFlowPath()
         self.el_path = FlowPath()
+
+        # Optional categorical element distribution from config
+        self.element_dist = None
+        if config is not None and config.element_dist:
+            probs = torch.tensor(config.element_dist, dtype=torch.float)
+            self.element_dist = probs / probs.sum()
+
+    def _sample_element_noise(self, like_tensor):
+        """Sample element noise in embedding space.
+
+        If element_dist is set, samples from a mixture of Gaussians centered at
+        one-hot vectors with categorical mixing weights. Otherwise standard Gaussian.
+        """
+        if self.element_dist is None:
+            return torch.randn_like(like_tensor)
+        n_atoms = like_tensor.shape[0]
+        n_elements = like_tensor.shape[1]
+        dist = self.element_dist.to(like_tensor.device)
+        indices = torch.multinomial(dist.expand(n_atoms, -1), 1).squeeze(1)
+        onehot = F.one_hot(indices, n_elements).float()
+        return onehot + torch.randn_like(like_tensor)
 
     def sample_t(self, batch) -> torch.FloatTensor:
         """Sample uniform t in [0, 1] with shape (batch_size,)."""
@@ -65,7 +87,7 @@ class FlowMatcher:
         clean_emb = sample.get_element_emb()
         if clean_emb is None:
             clean_emb = self.element_embedding.embed(sample.get_elements())
-        noise_emb = torch.randn_like(clean_emb)
+        noise_emb = self._sample_element_noise(clean_emb)
         source = source.update_attrs(
             element_emb=noise_emb,
             elements=self.element_embedding.unembed(noise_emb),
@@ -96,7 +118,7 @@ class FlowMatcher:
         clean_emb = clean_batch.get_element_emb()
         if clean_emb is None:
             clean_emb = self.element_embedding.embed(clean_batch.get_elements())
-        noise_emb = torch.randn_like(clean_emb)
+        noise_emb = self._sample_element_noise(clean_emb)
         v_el_target = self.el_path.velocity(noise_emb, clean_emb)
         flow_el = self.el_path.interpolate(noise_emb, clean_emb, t_atom)
 
@@ -325,5 +347,43 @@ if __name__ == "__main__":
     expected_final_el = source_sample.get_element_emb() + 1.0 * const_v_el
     assert torch.allclose(traj[-1].get_element_emb(), expected_final_el, atol=1e-4), "Generate final elements"
     print("5. generate trajectory OK")
+
+    # 6. Categorical element noise sampling
+    from db import FlowMatcherConfig
+
+    # Heavy weight on O (index 1), light on others
+    dist = [0.1, 0.6, 0.05, 0.05, 0.05, 0.05, 0.025, 0.025, 0.025, 0.025, 0.0]
+    cfg = FlowMatcherConfig(element_dist=dist)
+    fm_cat = FlowMatcher(element_embedding=el_emb, config=cfg)
+
+    assert fm_cat.element_dist is not None, "element_dist should be set"
+    assert torch.allclose(fm_cat.element_dist.sum(), torch.tensor(1.0), atol=1e-5), "element_dist should be normalized"
+
+    # Shape smoke test
+    dummy = torch.randn(1000, el_emb.n_elements)
+    noise = fm_cat._sample_element_noise(dummy)
+    assert noise.shape == dummy.shape, f"Shape mismatch: {noise.shape} != {dummy.shape}"
+
+    # Check that argmax distribution is biased toward O (index 1)
+    # With σ=1 noise on 11-dim one-hot, argmax recovery is noisy but should
+    # clearly exceed the uniform baseline of ~0.09 (1/11)
+    decoded_indices = torch.argmax(noise, dim=1)
+    counts = torch.bincount(decoded_indices, minlength=el_emb.n_elements)
+    o_fraction = counts[1].item() / 1000
+    uniform_baseline = 1.0 / el_emb.n_elements
+    assert o_fraction > uniform_baseline * 1.5, (
+        f"Expected O fraction > {uniform_baseline * 1.5:.3f} (1.5x uniform), got {o_fraction}"
+    )
+
+    # Verify sample_source and compute_flow work with categorical config
+    source_cat = fm_cat.sample_source(batch)
+    assert source_cat.get_element_emb().shape == el_emb.embed(batch.get_elements()).shape
+    flow_cat, (vp_cat, ve_cat) = fm_cat.compute_flow(batch, t)
+    assert flow_cat.get_element_emb().shape == el_emb.embed(batch.get_elements()).shape
+
+    # Without config: should fall back to standard Gaussian
+    fm_default = FlowMatcher(element_embedding=el_emb)
+    assert fm_default.element_dist is None
+    print("6. Categorical element noise OK")
 
     print("\nAll flow matching math tests PASSED")

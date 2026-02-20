@@ -15,6 +15,7 @@ import streamlit as st
 
 from db import (
     Dataset,
+    FlowMatcherConfig,
     Model,
     Property,
     Run,
@@ -203,6 +204,18 @@ def main():
         height=250,
     )
 
+    # Flow Matcher Configuration
+    st.header("Flow Matcher Configuration")
+    use_element_dist = st.toggle("Use Element Distribution", value=False, key="use_element_dist")
+    element_dist_text = ""
+    if use_element_dist:
+        element_dist_text = st.text_area(
+            "Element Distribution (JSON list of probabilities, aligned with model element list)",
+            value="[]",
+            height=80,
+            key="element_dist_input",
+        )
+
     # Training Configuration
     st.header("Training Configuration")
     do_train = st.toggle("Enable Training", value=False)
@@ -327,6 +340,24 @@ def main():
         if err:
             errors.append(f"Model kwargs: {err}")
 
+        # Parse element distribution
+        element_dist = None
+        if use_element_dist:
+            try:
+                element_dist = json.loads(element_dist_text)
+                if not isinstance(element_dist, list) or not all(isinstance(v, (int, float)) for v in element_dist):
+                    errors.append("Element distribution must be a JSON list of numbers")
+                    element_dist = None
+                elif len(element_dist) == 0:
+                    errors.append("Element distribution list cannot be empty")
+                    element_dist = None
+                elif any(v < 0 for v in element_dist):
+                    errors.append("Element distribution values must be non-negative")
+                    element_dist = None
+            except json.JSONDecodeError as e:
+                errors.append(f"Element distribution: Invalid JSON: {e}")
+                element_dist = None
+
         # Validate required fields
         if do_train and not train_config.get("dataset", {}).get("path"):
             errors.append("Training dataset path is required")
@@ -390,11 +421,17 @@ def main():
                     checkpoint_run_id=test_config.get("checkpoint_run_id") or None,
                 )
 
+            # Build FlowMatcherConfig
+            fm_config = None
+            if element_dist is not None:
+                fm_config = FlowMatcherConfig(element_dist=[float(v) for v in element_dist])
+
             # Create Run
             run = Run(
                 id=generate_experiment_id(),
                 created_at=datetime.now(timezone.utc),
                 model=Model(name=selected_model, kwargs=model_kwargs),
+                flow_matcher=fm_config,
                 do_train=do_train,
                 trainer=trainer,
                 do_test=do_test,

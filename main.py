@@ -47,7 +47,7 @@ def main() -> int:
         model = create_model(run.model.name, model_kwargs)
 
         element_embedding = model.element_embedding
-        flow_matcher = FlowMatcher(element_embedding=element_embedding)
+        flow_matcher = FlowMatcher(element_embedding=element_embedding, config=run.flow_matcher)
         print(f"Finished initialization for run {run.id}")
 
         if run.do_train:

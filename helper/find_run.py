@@ -350,7 +350,13 @@ def render_run_card(run: Run, index: int):
         if run.model.kwargs:
             st.json(run.model.kwargs, expanded=1)
 
-        # Row 3: Trainer Config
+        # Row 3: Flow Matcher Config
+        if run.flow_matcher and run.flow_matcher.element_dist:
+            st.divider()
+            st.markdown("##### Flow Matcher Configuration")
+            st.text(f"Element Distribution: {run.flow_matcher.element_dist}")
+
+        # Row 4: Trainer Config
         if run.do_train and run.trainer:
             st.divider()
             st.markdown("##### Trainer Configuration")
@@ -373,7 +379,7 @@ def render_run_card(run: Run, index: int):
             with st.expander("Trainer Dataset", expanded=False):
                 render_dataset_section(t.dataset)
 
-        # Row 4: Tester Config
+        # Row 5: Tester Config
         if run.do_test and run.tester:
             st.divider()
             st.markdown("##### Tester Configuration")
@@ -392,7 +398,7 @@ def render_run_card(run: Run, index: int):
             with st.expander("Tester Dataset", expanded=False):
                 render_dataset_section(t.dataset)
 
-        # Row 5: Logs & Results
+        # Row 6: Logs & Results
         st.divider()
         col1, col2 = st.columns(2)
         with col1:
@@ -420,7 +426,7 @@ def render_run_card(run: Run, index: int):
                         if result.outputs:
                             st.json(result.outputs)
 
-        # Row 6: Error Message (if failed)
+        # Row 7: Error Message (if failed)
         if status == RunStatus.FAILED and run.message:
             st.divider()
             st.markdown("##### Error Message")
