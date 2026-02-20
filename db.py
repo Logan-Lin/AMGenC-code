@@ -41,6 +41,7 @@ class Dataset(EmbeddedDocument):
     """Dataset configuration for one run."""
 
     path = StringField(required=True)
+    index = StringField()  # ASE index string for frame selection, e.g. ":1000"
     batch_size = IntField(default=4)
     properties = EmbeddedDocumentListField(Property)
     init_r_cut = FloatField()  # padded cutoff for neighbor list construction

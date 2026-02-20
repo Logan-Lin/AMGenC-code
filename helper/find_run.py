@@ -286,6 +286,7 @@ def render_dataset_section(dataset):
     col1, col2 = st.columns(2)
     with col1:
         st.text(f"Path: {dataset.path or '-'}")
+        st.text(f"Index: {dataset.index or '-'}")
         st.text(f"Batch Size: {dataset.batch_size}")
     with col2:
         st.text(f"Init R Cut: {dataset.init_r_cut or '-'}")

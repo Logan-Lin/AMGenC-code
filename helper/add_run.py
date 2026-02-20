@@ -136,10 +136,16 @@ def render_properties_section(prefix: str) -> list[dict]:
 
 def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
     """Render dataset configuration fields."""
-    col1, col2 = st.columns([4, 1])
+    col1, col2, col3 = st.columns([4, 1, 1])
     with col1:
         path = st.text_input("Path", value="data/bmp-sample", key=f"{prefix}_path")
     with col2:
+        index = st.text_input(
+            "Index", value="", key=f"{prefix}_index",
+            help="ASE index string for frame selection, e.g. ':1000'. Leave empty for all frames.",
+        )
+    index = index.strip() or None
+    with col3:
         batch_size = st.number_input(
             "Batch", value=dataset_defaults.get("batch_size", 4),
             min_value=1, step=1, key=f"{prefix}_batch_size",
@@ -173,6 +179,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
 
     return {
         "path": path,
+        "index": index,
         "batch_size": batch_size,
         "init_r_cut": init_r_cut,
         "charge_module": charge_module,
@@ -416,6 +423,7 @@ def main():
             def build_dataset_doc(values: dict) -> Dataset:
                 return Dataset(
                     path=values["path"],
+                    index=values.get("index"),
                     batch_size=values["batch_size"],
                     init_r_cut=values["init_r_cut"],
                     charge_module=values.get("charge_module"),

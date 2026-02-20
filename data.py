@@ -234,13 +234,13 @@ class Batch:
 class MaterialDataset(Dataset):
     """Dataset of material samples loaded from extxyz files with optional property JSONs."""
 
-    def __init__(self, path: str, properties: list | None = None):
+    def __init__(self, path: str, index: str = ":", properties: list | None = None):
         super().__init__()
         atoms_file = os.path.join(path, "atoms.extxyz")
         if not os.path.isfile(atoms_file):
             raise FileNotFoundError(f"No atoms.extxyz found in {path}")
 
-        frames = ase_read(atoms_file, index=":")
+        frames = ase_read(atoms_file, index=index)
         if not isinstance(frames, list):
             frames = [frames]
         samples: list[Sample] = [Sample.from_ase_atoms(atoms) for atoms in frames]
@@ -248,10 +248,16 @@ class MaterialDataset(Dataset):
         # Load and merge property JSON files, then precompute condition vectors
         json_files = sorted(glob.glob(os.path.join(path, "*.json")))
         if json_files:
+            # Parse ASE index string to apply the same selection to property lists
+            from ase.io.formats import string2index
+            idx = string2index(index)
+
             raw_props: list[dict[str, float]] = [{} for _ in samples]
             for jf in json_files:
                 with open(jf) as fh:
-                    prop_list = json.load(fh)
+                    prop_list = json.load(fh)[idx]
+                if not isinstance(prop_list, list):
+                    prop_list = [prop_list]
                 if len(prop_list) != len(samples):
                     raise ValueError(
                         f"Property file {jf} has {len(prop_list)} entries but dataset has {len(samples)} samples"
@@ -303,7 +309,9 @@ def create_dataloader(dataset_cfg, device: str, shuffle: bool = False) -> DataLo
     Returns:
         Configured DataLoader instance.
     """
-    dataset = MaterialDataset(path=dataset_cfg.path, properties=dataset_cfg.properties)
+    dataset = MaterialDataset(
+        path=dataset_cfg.path, index=dataset_cfg.index or ":", properties=dataset_cfg.properties,
+    )
     collate_fn = MaterialCollateFn(device=device, init_r_cut=dataset_cfg.init_r_cut)
     return DataLoader(dataset, batch_size=dataset_cfg.batch_size, shuffle=shuffle, collate_fn=collate_fn)
 
@@ -314,6 +322,10 @@ if __name__ == "__main__":
     s = ds[0]
     print(f"elements={s.elements.shape}, positions={s.positions.shape}, cond={s.cond}")
 
+    # Test with index selection
+    ds_sub = MaterialDataset("data/bmp-sample", index=":2")
+    print(f"Dataset size with index ':2': {len(ds_sub)}")
+
     # Test with property preprocessing
     from db import Property
     props = [
@@ -322,6 +334,10 @@ if __name__ == "__main__":
     ]
     ds2 = MaterialDataset("data/bmp-sample", properties=props)
     print(f"cond shape: {ds2[0].cond.shape}, values: {ds2[0].cond}")
+
+    # Test with index + properties
+    ds3 = MaterialDataset("data/bmp-sample", index=":2", properties=props)
+    print(f"Dataset size with index ':2' + props: {len(ds3)}, cond: {ds3[0].cond}")
 
     # Test Batch stacking
     from data import Batch
