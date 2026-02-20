@@ -428,7 +428,7 @@ def render_run_card(run: Run, index: int):
 
 
 def main():
-    st.set_page_config(page_title="Find Runs", layout="wide")
+    st.set_page_config(page_title="Charge-Bal - Find Runs", layout="wide", page_icon=":mag:")
     st.title("Find and Manage Runs")
 
     init_db()

@@ -180,7 +180,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
 
 
 def main():
-    st.set_page_config(page_title="Add New Run", layout="wide")
+    st.set_page_config(page_title="Charge-Bal - Add Run", layout="wide", page_icon=":test_tube:")
     st.title("Add New Run Configuration")
 
     init_db()
