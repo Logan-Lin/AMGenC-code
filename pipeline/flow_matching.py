@@ -171,7 +171,8 @@ class FlowMatcher:
 
         return next_sample, pred_clean
 
-    def generate(self, source_sample, n_steps, model, cond=None):
+    def generate(self, source_sample, n_steps, model, cond=None,
+                 charge_module=None, pcfm_temperature=0.1):
         """Generate by integrating from t=0 to t=1.
 
         Args:
@@ -179,9 +180,12 @@ class FlowMatcher:
             n_steps: number of integration steps.
             model: velocity network.
             cond: optional condition tensor.
+            charge_module: optional ChargeModule for PCFM projection.
+            pcfm_temperature: softmax temperature for PCFM projection.
 
         Returns:
-            List of samples along the trajectory (length n_steps + 1).
+            (trajectory, pred_cleans): trajectory has length n_steps + 1,
+            pred_cleans has length n_steps.
         """
         timesteps = np.linspace(0, 1, n_steps + 1)
         device = source_sample.get_positions().device
@@ -196,6 +200,31 @@ class FlowMatcher:
             dt = timesteps[i + 1] - timesteps[i]
             t_tensor = torch.full((batch_size,), t_val, dtype=torch.float, device=device)
             sample, pred_clean = self.integrate_step(sample, t_tensor, dt, model, cond=cond)
+
+            # PCFM projection: correct element logits to push charge toward zero
+            if charge_module is not None and t_val < 1.0:
+                batch_indices = sample.get_batch_indices()
+                clean_el = pred_clean.get_element_emb()
+                corrected_el = charge_module.pcfm_project(
+                    clean_el, batch_indices, batch_size, temperature=pcfm_temperature,
+                )
+
+                # Reverse update via OT displacement interpolant (PCFM Eq. 5):
+                # ū_τ' = (1 - τ') u₀ + τ' u_proj
+                # where u₀ is the source element embedding and u_proj is corrected_el.
+                t_prime = timesteps[i + 1]
+                source_el = source_sample.get_element_emb()
+                new_el = (1 - t_prime) * source_el + t_prime * corrected_el
+
+                sample = sample.update_attrs(
+                    element_emb=new_el,
+                    elements=self.element_embedding.unembed(new_el),
+                )
+                pred_clean = pred_clean.update_attrs(
+                    element_emb=corrected_el,
+                    elements=self.element_embedding.unembed(corrected_el),
+                )
+
             trajectory.append(sample)
             pred_cleans.append(pred_clean)
 
@@ -385,5 +414,52 @@ if __name__ == "__main__":
     fm_default = FlowMatcher(element_embedding=el_emb)
     assert fm_default.element_dist is None
     print("6. Categorical element noise OK")
+
+    # 7. PCFM projection smoke test in generate()
+    from nn.charge import create_charge_module
+
+    charge_mod = create_charge_module("bmp", elements)
+    n_steps_pcfm = 100
+    tau_test = 0.2
+    source_pcfm = fm.sample_source(batch)
+
+    # Generate WITHOUT PCFM
+    traj_no_pcfm, preds_no_pcfm = fm.generate(source_pcfm, n_steps_pcfm, mock_model)
+    final_el_no = traj_no_pcfm[-1].get_element_emb()
+    soft_no = torch.softmax(final_el_no / tau_test, dim=-1)
+    Q_no = charge_mod.batch_charge(soft_no, traj_no_pcfm[-1].get_batch_indices(),
+                                    traj_no_pcfm[-1].get_batch_size())
+
+    # Generate WITH PCFM (same source for fair comparison)
+    traj_pcfm, preds_pcfm = fm.generate(source_pcfm, n_steps_pcfm, mock_model,
+                                         charge_module=charge_mod, pcfm_temperature=tau_test)
+    final_el_yes = traj_pcfm[-1].get_element_emb()
+    soft_yes = torch.softmax(final_el_yes / tau_test, dim=-1)
+    Q_yes = charge_mod.batch_charge(soft_yes, traj_pcfm[-1].get_batch_indices(),
+                                     traj_pcfm[-1].get_batch_size())
+
+    # Hard charges: argmax → one-hot → charge
+    hard_no = F.one_hot(final_el_no.argmax(dim=-1), final_el_no.shape[-1]).float()
+    Q_no_hard = charge_mod.batch_charge(hard_no, traj_no_pcfm[-1].get_batch_indices(),
+                                         traj_no_pcfm[-1].get_batch_size())
+    hard_yes = F.one_hot(final_el_yes.argmax(dim=-1), final_el_yes.shape[-1]).float()
+    Q_yes_hard = charge_mod.batch_charge(hard_yes, traj_pcfm[-1].get_batch_indices(),
+                                          traj_pcfm[-1].get_batch_size())
+
+    print(f"  Soft charges without PCFM: {Q_no.tolist()}")
+    print(f"  Soft charges with PCFM:    {Q_yes.tolist()}")
+    print(f"  Hard charges without PCFM: {Q_no_hard.tolist()}")
+    print(f"  Hard charges with PCFM:    {Q_yes_hard.tolist()}")
+    assert Q_yes.abs().mean() < Q_no.abs().mean(), \
+        f"PCFM should reduce mean |charge|: without={Q_no.abs().mean():.4f}, with={Q_yes.abs().mean():.4f}"
+
+    # Trajectory shape should be unchanged
+    assert len(traj_pcfm) == n_steps_pcfm + 1
+    assert len(preds_pcfm) == n_steps_pcfm
+
+    # Positions should be identical (PCFM only affects elements)
+    assert torch.allclose(traj_pcfm[-1].get_positions(), traj_no_pcfm[-1].get_positions(), atol=atol), \
+        "PCFM should not affect positions"
+    print("7. PCFM projection in generate() OK")
 
     print("\nAll flow matching math tests PASSED")

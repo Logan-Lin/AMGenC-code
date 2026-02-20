@@ -38,13 +38,22 @@ def test(
         traj_dir = os.path.join(output_dir, "infer_traj")
         os.makedirs(traj_dir, exist_ok=True)
 
-    # Set up charge analysis if enabled
+    # Set up charge module if needed (for analysis and/or PCFM projection)
+    use_pcfm = getattr(cfg, 'use_pcfm', False)
+    pcfm_temperature = getattr(cfg, 'pcfm_temperature', 0.1)
+    analysis_temperature = getattr(cfg, 'analysis_temperature', 0.1)
+    needs_charge_mod = (analyze_trajectory and cfg.dataset.charge_module) or use_pcfm
+
     charge_mod = None
-    if analyze_trajectory and cfg.dataset.charge_module:
+    if needs_charge_mod:
+        if not cfg.dataset.charge_module:
+            raise ValueError("use_pcfm requires a charge_module to be set in the dataset config")
         from nn.charge import create_charge_module
         elements = run.model.kwargs['elements']
         charge_mod = create_charge_module(cfg.dataset.charge_module, elements)
         charge_mod = charge_mod.to(device)
+
+    if analyze_trajectory and charge_mod is not None:
         # Per-step lists accumulating per-sample charges across all batches
         all_hard_charges = [[] for _ in range(n_steps)]
         all_soft_charges = [[] for _ in range(n_steps)]
@@ -63,7 +72,11 @@ def test(
 
             cond = batch.cond
             source = flow_matcher.sample_source(batch)
-            trajectory, pred_cleans = flow_matcher.generate(source, n_steps, model, cond=cond)
+            pcfm_charge_mod = charge_mod if use_pcfm else None
+            trajectory, pred_cleans = flow_matcher.generate(
+                source, n_steps, model, cond=cond,
+                charge_module=pcfm_charge_mod, pcfm_temperature=pcfm_temperature,
+            )
 
             final = trajectory[-1]
             for s in final.to_samples():
@@ -78,14 +91,14 @@ def test(
                 is_first_batch = False
 
             # Accumulate charge analysis across all batches
-            if charge_mod is not None:
+            if analyze_trajectory and charge_mod is not None:
                 batch_size = pred_cleans[0].get_batch_size()
                 for step_idx, pc in enumerate(pred_cleans):
                     pc_emb = pc.get_element_emb()
                     pc_bi = pc.get_batch_indices()
 
-                    # Soft charges: apply softmax with low temperature to sharpen toward one-hot
-                    soft_emb = torch.softmax(pc_emb / 0.1, dim=-1)
+                    # Soft charges: apply softmax with configurable temperature
+                    soft_emb = torch.softmax(pc_emb / analysis_temperature, dim=-1)
                     soft = charge_mod.batch_charge(soft_emb, pc_bi, batch_size)
                     all_soft_charges[step_idx].append(soft.cpu())
 
@@ -101,7 +114,7 @@ def test(
     ase_write(os.path.join(output_dir, "generated.extxyz"), all_atoms)
 
     # Plot charge analysis
-    if charge_mod is not None:
+    if analyze_trajectory and charge_mod is not None:
         timesteps = np.linspace(0, 1, n_steps + 1)[1:]  # pred_clean at steps 1..n_steps
         hard_charges = torch.stack([torch.cat(step) for step in all_hard_charges]).numpy()  # (n_steps, N_samples)
         soft_charges = torch.stack([torch.cat(step) for step in all_soft_charges]).numpy()

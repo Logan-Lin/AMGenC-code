@@ -3,7 +3,7 @@
 - [x] Implement add-run and find-run streamlit helpers
 - [x] Implement dataset analysis module
 - [x] Implement option to sample element noise from categorical distribution
-- [ ] Implement optional PCFM projection step
+- [x] Implement optional PCFM projection step
 - [ ] Implement final discrete projection step
 
 ## BMP Dataset

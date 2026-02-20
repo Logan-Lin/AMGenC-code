@@ -389,6 +389,11 @@ def render_run_card(run: Run, index: int):
                 st.text(f"N Steps: {t.n_steps}")
                 st.text(f"Save Trajectory: {t.save_trajectory}")
                 st.text(f"Analyze Trajectory: {t.analyze_trajectory}")
+                if t.analyze_trajectory:
+                    st.text(f"Analysis Temperature: {getattr(t, 'analysis_temperature', 0.1)}")
+                st.text(f"PCFM Projection: {getattr(t, 'use_pcfm', False)}")
+                if getattr(t, 'use_pcfm', False):
+                    st.text(f"PCFM Temperature: {getattr(t, 'pcfm_temperature', 0.1)}")
             with col2:
                 st.text(f"Use Checkpoint: {t.use_checkpoint}")
                 if t.use_checkpoint:

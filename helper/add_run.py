@@ -320,6 +320,30 @@ def main():
                 "Checkpoint Run ID", key="test_ckpt_run_id",
             )
 
+        analysis_temperature = tester_defaults.get("analysis_temperature", 0.1)
+        if analyze_trajectory_test:
+            analysis_temperature = st.number_input(
+                "Analysis Temperature", value=tester_defaults.get("analysis_temperature", 0.1),
+                format="%.4f", step=0.01, min_value=0.001,
+                key="test_analysis_temperature",
+                help="Softmax temperature τ for trajectory charge analysis.",
+            )
+
+        col_pcfm1, col_pcfm2 = st.columns([1, 1])
+        with col_pcfm1:
+            use_pcfm = st.toggle(
+                "PCFM Projection", value=tester_defaults.get("use_pcfm", False),
+                key="test_use_pcfm",
+            )
+        pcfm_temperature = tester_defaults.get("pcfm_temperature", 0.1)
+        if use_pcfm:
+            with col_pcfm2:
+                pcfm_temperature = st.number_input(
+                    "PCFM Temperature", value=tester_defaults.get("pcfm_temperature", 0.1),
+                    format="%.4f", step=0.01, min_value=0.001,
+                    key="test_pcfm_temperature",
+                )
+
         test_config = {
             "dataset": test_dataset, "n_steps": n_steps,
             "save_trajectory": save_trajectory_test,
@@ -327,6 +351,9 @@ def main():
             "use_checkpoint": use_checkpoint_test,
             "checkpoint_epoch": checkpoint_epoch_test,
             "checkpoint_run_id": checkpoint_run_id_test,
+            "use_pcfm": use_pcfm,
+            "pcfm_temperature": pcfm_temperature,
+            "analysis_temperature": analysis_temperature,
         }
 
     # Submit
@@ -363,6 +390,8 @@ def main():
             errors.append("Training dataset path is required")
         if do_test and not test_config.get("dataset", {}).get("path"):
             errors.append("Testing dataset path is required")
+        if do_test and test_config.get("use_pcfm") and not test_config.get("dataset", {}).get("charge_module"):
+            errors.append("PCFM Projection requires a Charge Module to be set in the test dataset")
 
         # Validate properties
         for section_name, config in [("Training", train_config), ("Testing", test_config)]:
@@ -419,6 +448,9 @@ def main():
                     use_checkpoint=test_config["use_checkpoint"],
                     checkpoint_epoch=test_config.get("checkpoint_epoch"),
                     checkpoint_run_id=test_config.get("checkpoint_run_id") or None,
+                    use_pcfm=test_config.get("use_pcfm", False),
+                    pcfm_temperature=test_config.get("pcfm_temperature", 0.1),
+                    analysis_temperature=test_config.get("analysis_temperature", 0.1),
                 )
 
             # Build FlowMatcherConfig

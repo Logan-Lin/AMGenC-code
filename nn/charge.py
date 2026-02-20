@@ -130,6 +130,43 @@ class ChargeModule(nn.Module):
         result.scatter_add_(0, batch_indices, per_atom)
         return result
 
+    @torch.enable_grad()
+    def pcfm_project(self, logits, batch_indices, batch_size, temperature=0.1):
+        """PCFM Gauss-Newton projection to push total charge toward zero.
+
+        Applies one step of: θ ← θ − (Q / |∇_θ Q|²) ∇_θ Q
+        where Q = 1ᵀ softmax(θ/τ) C, independently per sample.
+
+        Args:
+            logits: (N_total, n_elements) element logits (pre-softmax).
+            batch_indices: (N_total,) integer tensor assigning each atom to a sample.
+            batch_size: Number of samples in the batch.
+            temperature: Softmax temperature τ.
+
+        Returns:
+            (N_total, n_elements) corrected logits (detached).
+        """
+        theta = logits.detach().clone().requires_grad_(True)
+        soft = torch.softmax(theta / temperature, dim=-1)
+        Q = self.batch_charge(soft, batch_indices, batch_size)
+        Q.sum().backward()
+        grad = theta.grad  # (N_total, n_elements)
+
+        # Per-sample squared gradient norm: sum of grad^2 over all atoms and elements per sample
+        grad_sq_per_atom = (grad * grad).sum(dim=-1)  # (N_total,)
+        grad_norm_sq = logits.new_zeros(batch_size)
+        grad_norm_sq.scatter_add_(0, batch_indices, grad_sq_per_atom)  # (batch_size,)
+
+        # Clamp to avoid division by zero
+        grad_norm_sq = grad_norm_sq.clamp(min=1e-12)
+
+        # Per-sample scale: Q_i / |grad_i|^2
+        scale = Q.detach() / grad_norm_sq  # (batch_size,)
+
+        # Apply correction: theta - scale[batch_indices] * grad
+        corrected = theta.detach() - scale[batch_indices].unsqueeze(-1) * grad.detach()
+        return corrected
+
 
 class BMPChargeModule(ChargeModule):
     """Charge module using BMP potential partial charges.
@@ -221,3 +258,43 @@ if __name__ == "__main__":
     assert soft_emb.grad is not None, "Gradient should flow through soft embeddings"
     print(f"Soft charge = {soft_charge.item():.4f}, grad norm = {soft_emb.grad.norm().item():.4f}")
     print("Gradient flow: OK")
+
+    # Test PCFM projection
+    print("\n--- PCFM Projection Test ---")
+    n_atoms_pcfm = 50
+    tau_test = 0.5
+    n_pcfm_iter = 100
+    logits_pcfm = torch.randn(n_atoms_pcfm, len(elements))
+    batch_indices_pcfm = torch.zeros(n_atoms_pcfm, dtype=torch.long)  # single sample
+
+    # Charge before projection
+    soft_before = torch.softmax(logits_pcfm / tau_test, dim=-1)
+    Q_before = charge_mod.sample_charge(soft_before).item()
+    print(f"Charge before PCFM: {Q_before:.4f}")
+
+    # Apply multiple PCFM iterations to drive charge close to zero
+    corrected = logits_pcfm
+    for iteration in range(n_pcfm_iter):
+        corrected = charge_mod.pcfm_project(corrected, batch_indices_pcfm, 1, temperature=tau_test)
+
+    soft_after = torch.softmax(corrected / tau_test, dim=-1)
+    Q_after = charge_mod.sample_charge(soft_after).item()
+    print(f"Charge after {n_pcfm_iter} PCFM iterations: {Q_after:.4f}")
+    assert abs(Q_after) < abs(Q_before), \
+        f"PCFM should reduce |charge|: before={abs(Q_before):.4f}, after={abs(Q_after):.4f}"
+    assert abs(Q_after) < 1.0, f"After {n_pcfm_iter} iterations, charge should be near zero, got {Q_after:.4f}"
+
+    # Test with batched input (2 samples)
+    logits_b = torch.randn(80, len(elements))
+    bi_b = torch.cat([torch.zeros(40, dtype=torch.long), torch.ones(40, dtype=torch.long)])
+    soft_b_before = torch.softmax(logits_b / tau_test, dim=-1)
+    Q_b_before = charge_mod.batch_charge(soft_b_before, bi_b, 2)
+    corrected_b = logits_b
+    for _ in range(n_pcfm_iter):
+        corrected_b = charge_mod.pcfm_project(corrected_b, bi_b, 2, temperature=tau_test)
+    soft_b_after = torch.softmax(corrected_b / tau_test, dim=-1)
+    Q_b_after = charge_mod.batch_charge(soft_b_after, bi_b, 2)
+    print(f"Batch charges before: {Q_b_before.tolist()}")
+    print(f"Batch charges after:  {Q_b_after.tolist()}")
+    assert (Q_b_after.abs() < Q_b_before.abs()).all(), "PCFM should reduce |charge| for all samples in batch"
+    print("PCFM projection: OK")
