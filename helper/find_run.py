@@ -278,27 +278,35 @@ def build_query(filters: dict) -> list[Run]:
 
 
 def render_dataset_section(dataset):
-    """Render dataset configuration details."""
+    """Render dataset configuration as a compact bordered card."""
     if not dataset:
-        st.text("No dataset configured")
+        st.caption("No dataset configured")
         return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.text(f"Path: {dataset.path or '-'}")
-        st.text(f"Index: {dataset.index or '-'}")
-        st.text(f"Batch Size: {dataset.batch_size}")
-    with col2:
-        st.text(f"Init R Cut: {dataset.init_r_cut or '-'}")
-        st.text(f"Charge Module: {dataset.charge_module or '-'}")
+    with st.container(border=True):
+        c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
+        with c1:
+            st.markdown(f"**Path** `{dataset.path or '-'}`")
+        with c2:
+            st.markdown(f"**Index** `{dataset.index or 'all'}`")
+        with c3:
+            st.markdown(f"**Batch** `{dataset.batch_size}`")
+        with c4:
+            st.markdown(f"**R Cut** `{dataset.init_r_cut or '-'}`")
+        with c5:
+            st.markdown(f"**Charge** `{dataset.charge_module or '-'}`")
 
-    # Properties
-    if dataset.properties:
-        props_data = [
-            {"Name": p.name, "Offset": f"{p.offset:.4f}", "Scale": f"{p.scale:.4f}"}
-            for p in dataset.properties
-        ]
-        st.table(props_data)
+        if dataset.properties:
+            props_data = [
+                {"Name": p.name, "Offset": f"{p.offset:.4f}", "Scale": f"{p.scale:.4f}"}
+                for p in dataset.properties
+            ]
+            st.dataframe(
+                props_data,
+                width="stretch",
+                hide_index=True,
+                height=min(35 + 35 * len(props_data), 200),
+            )
 
 
 def render_run_card(run: Run, index: int):
@@ -323,17 +331,16 @@ def render_run_card(run: Run, index: int):
     label = f"`{run.id}` | :{status_color}[{status.value}] | {run.model.name} | {task_str} | {created_str}"
 
     with st.expander(label, expanded=False):
-        # Row 1: Timestamps & Actions
-        col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 2, 1])
-        with col1:
-            st.text(f"Created: {format_datetime(run.created_at)}")
-        with col2:
-            st.text(f"Started: {format_datetime(run.started_at)}")
-        with col3:
-            st.text(f"Completed: {format_datetime(run.completed_at)}")
-        with col4:
-            st.text(f"Host: {run.run_on or '-'}")
-        with col5:
+        # Header: compact metadata line + discard button
+        meta_col, action_col = st.columns([9, 1])
+        with meta_col:
+            st.markdown(
+                f"**Created** {format_datetime(run.created_at)} · "
+                f"**Started** {format_datetime(run.started_at)} · "
+                f"**Completed** {format_datetime(run.completed_at)} · "
+                f"**Host** `{run.run_on or '-'}`"
+            )
+        with action_col:
             if status in (RunStatus.NOT_STARTED, RunStatus.RUNNING):
                 if st.button("Discard", key=f"discard_{run.id}_{index}", type="secondary"):
                     if run.started_at is None:
@@ -343,100 +350,128 @@ def render_run_card(run: Run, index: int):
                     st.cache_data.clear()
                     st.rerun()
 
-        st.divider()
-
-        # Row 2: Model Configuration
-        st.markdown("##### Model Configuration")
-        st.markdown(f"**Model:** `{run.model.name}`")
-        if run.model.kwargs:
-            st.json(run.model.kwargs, expanded=1)
-
-        # Row 3: Flow Matcher Config
-        if run.flow_matcher and run.flow_matcher.element_dist:
-            st.divider()
-            st.markdown("##### Flow Matcher Configuration")
-            st.text(f"Element Distribution: {run.flow_matcher.element_dist}")
-
-        # Row 4: Trainer Config
-        if run.do_train and run.trainer:
-            st.divider()
-            st.markdown("##### Trainer Configuration")
-            t = run.trainer
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.text(f"Epochs: {t.train_epoch}")
-                st.text(f"Learning Rate: {t.lr:.6f}")
-            with col2:
-                st.text(f"Save Per Epoch: {t.save_per_epoch}")
-                st.text(f"Save Trajectory: {t.save_trajectory}")
-                if t.save_trajectory:
-                    st.text(f"Traj N Steps: {t.traj_n_steps}")
-            with col3:
-                st.text(f"Use Checkpoint: {t.use_checkpoint}")
-                if t.use_checkpoint:
-                    st.text(f"Checkpoint Epoch: {t.checkpoint_epoch or '-'}")
-                    st.text(f"Checkpoint Run ID: {t.checkpoint_run_id or '-'}")
-
-            with st.expander("Trainer Dataset", expanded=False):
-                render_dataset_section(t.dataset)
-
-        # Row 5: Tester Config
-        if run.do_test and run.tester:
-            st.divider()
-            st.markdown("##### Tester Configuration")
-            t = run.tester
-            col1, col2 = st.columns(2)
-            with col1:
-                st.text(f"N Steps: {t.n_steps}")
-                st.text(f"Save Trajectory: {t.save_trajectory}")
-                st.text(f"Analyze Trajectory: {t.analyze_trajectory}")
-                if t.analyze_trajectory:
-                    st.text(f"Analysis Temperature: {getattr(t, 'analysis_temperature', 0.1)}")
-                st.text(f"PCFM Projection: {getattr(t, 'use_pcfm', False)}")
-                if getattr(t, 'use_pcfm', False):
-                    st.text(f"PCFM Temperature: {getattr(t, 'pcfm_temperature', 0.1)}")
-            with col2:
-                st.text(f"Use Checkpoint: {t.use_checkpoint}")
-                if t.use_checkpoint:
-                    st.text(f"Checkpoint Epoch: {t.checkpoint_epoch or '-'}")
-                    st.text(f"Checkpoint Run ID: {t.checkpoint_run_id or '-'}")
-
-            with st.expander("Tester Dataset", expanded=False):
-                render_dataset_section(t.dataset)
-
-        # Row 6: Logs & Results
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            logs_count = len(run.logs) if run.logs else 0
-            st.markdown(f"##### Logs ({logs_count} entries)")
-            if run.logs and len(run.logs) > 0:
-                with st.expander("View Logs"):
-                    show_log_data = st.checkbox("Show data", key=f"show_log_data_{run.id}_{index}")
-                    for log in run.logs:
-                        epoch_str = f"Epoch {log.epoch}" if log.epoch is not None else "-"
-                        loss_str = f"Loss {log.loss:.6f}" if log.loss is not None else "-"
-                        st.text(f"{epoch_str} | {loss_str} | {format_datetime(log.timestamp)}")
-                        if show_log_data and log.data:
-                            st.json(log.data)
-
-        with col2:
-            results_count = len(run.results) if run.results else 0
-            st.markdown(f"##### Results ({results_count} entries)")
-            if run.results and len(run.results) > 0:
-                with st.expander("View Results"):
-                    for i, result in enumerate(run.results):
-                        st.text(f"Result {i+1} - {format_datetime(result.timestamp)}")
-                        if result.metrics:
-                            st.json(result.metrics)
-                        if result.outputs:
-                            st.json(result.outputs)
-
-        # Row 7: Error Message (if failed)
+        # Error message shown immediately for failed runs
         if status == RunStatus.FAILED and run.message:
-            st.divider()
-            st.markdown("##### Error Message")
             st.error(run.message)
+
+        # Build dynamic tab list
+        tab_names = ["Configuration"]
+        if run.do_train and run.trainer:
+            tab_names.append("Training")
+        if run.do_test and run.tester:
+            tab_names.append("Testing")
+        tab_names.append("Output")
+
+        tabs = st.tabs(tab_names)
+        tab_idx = 0
+
+        # --- Configuration tab ---
+        with tabs[tab_idx]:
+            tab_idx += 1
+            model_col, fm_col = st.columns(2)
+            with model_col:
+                with st.container(border=True):
+                    st.markdown(f"**Model** · `{run.model.name}`")
+                    if run.model.kwargs:
+                        st.json(run.model.kwargs, expanded=False)
+            with fm_col:
+                with st.container(border=True):
+                    if run.flow_matcher and run.flow_matcher.element_dist:
+                        st.markdown("**Flow Matcher**")
+                        st.markdown(f"Element Distribution: `{run.flow_matcher.element_dist}`")
+                    else:
+                        st.markdown("**Flow Matcher** · *not configured*")
+
+        # --- Training tab ---
+        if run.do_train and run.trainer:
+            with tabs[tab_idx]:
+                tab_idx += 1
+                t = run.trainer
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.markdown(f"**Epochs** `{t.train_epoch}`  \n**LR** `{t.lr:.6f}`")
+                    with c2:
+                        st.markdown(f"**Save/Epoch** `{t.save_per_epoch}`")
+                    with c3:
+                        traj = f"**Save Traj** `{'Yes' if t.save_trajectory else 'No'}`"
+                        if t.save_trajectory:
+                            traj += f"  \n**Traj Steps** `{t.traj_n_steps}`"
+                        st.markdown(traj)
+                    with c4:
+                        ckpt = f"**Checkpoint** `{'Yes' if t.use_checkpoint else 'No'}`"
+                        if t.use_checkpoint:
+                            ckpt += f"  \n**Ckpt Epoch** `{t.checkpoint_epoch or '-'}`"
+                            ckpt += f"  \n**Ckpt Run** `{t.checkpoint_run_id or '-'}`"
+                        st.markdown(ckpt)
+
+                st.caption("Dataset")
+                render_dataset_section(t.dataset)
+
+        # --- Testing tab ---
+        if run.do_test and run.tester:
+            with tabs[tab_idx]:
+                tab_idx += 1
+                t = run.tester
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.markdown(f"**N Steps** `{t.n_steps}`")
+                    with c2:
+                        lines = [f"**Save Traj** `{'Yes' if t.save_trajectory else 'No'}`"]
+                        if getattr(t, "use_pcfm", False):
+                            lines.append(f"**PCFM** `Yes`  \n**PCFM Temp** `{getattr(t, 'pcfm_temperature', 0.1):.4f}`")
+                        else:
+                            lines.append("**PCFM** `No`")
+                        st.markdown("  \n".join(lines))
+                    with c3:
+                        lines = [f"**Analyze Traj** `{'Yes' if t.analyze_trajectory else 'No'}`"]
+                        if t.analyze_trajectory:
+                            lines.append(f"**Analysis Temp** `{getattr(t, 'analysis_temperature', 0.1):.4f}`")
+                        st.markdown("  \n".join(lines))
+                    with c4:
+                        ckpt = f"**Checkpoint** `{'Yes' if t.use_checkpoint else 'No'}`"
+                        if t.use_checkpoint:
+                            ckpt += f"  \n**Ckpt Epoch** `{t.checkpoint_epoch or '-'}`"
+                            ckpt += f"  \n**Ckpt Run** `{t.checkpoint_run_id or '-'}`"
+                        st.markdown(ckpt)
+
+                st.caption("Dataset")
+                render_dataset_section(t.dataset)
+
+        # --- Output tab ---
+        with tabs[tab_idx]:
+            logs_col, results_col = st.columns(2)
+            with logs_col:
+                with st.container(border=True):
+                    logs_count = len(run.logs) if run.logs else 0
+                    st.markdown(f"**Logs** ({logs_count} entries)")
+                    if run.logs and len(run.logs) > 0:
+                        log_rows = [
+                            {
+                                "Epoch": log.epoch if log.epoch is not None else "-",
+                                "Loss": f"{log.loss:.6f}" if log.loss is not None else "-",
+                                "Time": format_datetime(log.timestamp),
+                            }
+                            for log in run.logs
+                        ]
+                        st.dataframe(log_rows, width="stretch", hide_index=True)
+                        if st.checkbox("Show log data", key=f"log_data_{run.id}_{index}"):
+                            for log in run.logs:
+                                if log.data:
+                                    st.json(log.data, expanded=False)
+
+            with results_col:
+                with st.container(border=True):
+                    results_count = len(run.results) if run.results else 0
+                    st.markdown(f"**Results** ({results_count} entries)")
+                    if run.results and len(run.results) > 0:
+                        for i, result in enumerate(run.results):
+                            st.markdown(f"*Result {i + 1}* · {format_datetime(result.timestamp)}")
+                            if result.metrics:
+                                st.json(result.metrics, expanded=False)
+                            if result.outputs:
+                                st.json(result.outputs, expanded=False)
 
 
 def main():

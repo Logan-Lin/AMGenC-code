@@ -174,8 +174,9 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
         )
     charge_module = charge_module.strip() or None
 
-    with st.expander("Properties (condition normalization)", expanded=False):
-        properties = render_properties_section(prefix)
+    st.divider()
+    st.caption("Properties (condition normalization)")
+    properties = render_properties_section(prefix)
 
     return {
         "path": path,
@@ -188,7 +189,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
 
 
 def main():
-    st.set_page_config(page_title="Charge-Bal - Add Run", layout="wide", page_icon=":test_tube:")
+    st.set_page_config(page_title="Charge-Bal - Add Run", page_icon=":test_tube:")
     st.title("Add New Run Configuration")
 
     init_db()
@@ -198,30 +199,35 @@ def main():
     trainer_defaults = get_document_defaults(Trainer)
     tester_defaults = get_document_defaults(Tester)
 
-    # Model Configuration
-    st.header("Model Configuration")
-    model_names = list(MODEL_REGISTRY.keys())
-    selected_model = st.selectbox("Model", options=model_names)
-
-    model_cls = MODEL_REGISTRY[selected_model]
-    model_defaults = get_model_defaults(model_cls)
-    model_kwargs_text = st.text_area(
-        "Model Kwargs (JSON)",
-        value=json.dumps(model_defaults, indent=2),
-        height=250,
-    )
-
-    # Flow Matcher Configuration
-    st.header("Flow Matcher Configuration")
-    use_element_dist = st.toggle("Use Element Distribution", value=False, key="use_element_dist")
-    element_dist_text = ""
-    if use_element_dist:
-        element_dist_text = st.text_area(
-            "Element Distribution (JSON list of probabilities, aligned with model element list)",
-            value="[]",
-            height=80,
-            key="element_dist_input",
-        )
+    # Model & Flow Matcher
+    st.header("Model & Flow Matcher")
+    model_col, fm_col = st.columns(2)
+    with model_col:
+        with st.container(border=True):
+            model_names = list(MODEL_REGISTRY.keys())
+            selected_model = st.selectbox("Model", options=model_names)
+            model_cls = MODEL_REGISTRY[selected_model]
+            model_defaults = get_model_defaults(model_cls)
+            model_kwargs_text = st.text_area(
+                "Model Kwargs (JSON)",
+                value=json.dumps(model_defaults, indent=2),
+                height=250,
+            )
+    with fm_col:
+        with st.container(border=True):
+            use_element_dist = st.toggle(
+                "Use Element Distribution", value=False, key="use_element_dist",
+            )
+            element_dist_text = ""
+            if use_element_dist:
+                element_dist_text = st.text_area(
+                    "Element Distribution (JSON list of probabilities, aligned with model element list)",
+                    value="[]",
+                    height=80,
+                    key="element_dist_input",
+                )
+            else:
+                st.caption("Element distribution not enabled")
 
     # Training Configuration
     st.header("Training Configuration")
@@ -229,54 +235,56 @@ def main():
 
     train_config = {}
     if do_train:
-        with st.expander("Dataset", expanded=True):
+        st.caption("Dataset")
+        with st.container(border=True):
             train_dataset = render_dataset_section("train", dataset_defaults)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            train_epoch = st.number_input(
-                "Epochs", value=trainer_defaults.get("train_epoch") or 100,
-                min_value=1, step=10,
-            )
-        with col2:
-            lr = st.number_input(
-                "Learning Rate", value=trainer_defaults.get("lr") or 1e-4,
-                format="%.6f", step=1e-5,
-            )
-        with col3:
-            save_per_epoch = st.number_input(
-                "Save Per Epoch", value=trainer_defaults.get("save_per_epoch", 10),
-                min_value=1, step=5,
-            )
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            save_trajectory = st.toggle(
-                "Save Traj", value=trainer_defaults.get("save_trajectory", False),
-                key="train_save_traj",
-            )
-        traj_n_steps = None
-        if save_trajectory:
+        with st.container(border=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                train_epoch = st.number_input(
+                    "Epochs", value=trainer_defaults.get("train_epoch") or 100,
+                    min_value=1, step=10,
+                )
             with col2:
-                traj_n_steps = st.number_input(
-                    "Traj Steps", value=trainer_defaults.get("traj_n_steps", 50),
-                    min_value=1, step=10, key="train_traj_steps",
+                lr = st.number_input(
+                    "Learning Rate", value=trainer_defaults.get("lr") or 1e-4,
+                    format="%.6f", step=1e-5,
                 )
-        with col3:
-            use_checkpoint = st.toggle(
-                "Use Ckpt", value=trainer_defaults.get("use_checkpoint", False),
-                key="train_use_ckpt",
-            )
-        checkpoint_epoch, checkpoint_run_id = None, None
-        if use_checkpoint:
-            with col4:
-                checkpoint_epoch = st.number_input(
-                    "Ckpt Epoch", value=0, min_value=0, step=1,
-                    key="train_ckpt_epoch",
+            with col3:
+                save_per_epoch = st.number_input(
+                    "Save Per Epoch", value=trainer_defaults.get("save_per_epoch", 10),
+                    min_value=1, step=5,
                 )
-            checkpoint_run_id = st.text_input(
-                "Checkpoint Run ID", key="train_ckpt_run_id",
-            )
+
+        left, right = st.columns(2)
+        with left:
+            with st.container(border=True):
+                save_trajectory = st.toggle(
+                    "Save Traj", value=trainer_defaults.get("save_trajectory", False),
+                    key="train_save_traj",
+                )
+                traj_n_steps = None
+                if save_trajectory:
+                    traj_n_steps = st.number_input(
+                        "Traj Steps", value=trainer_defaults.get("traj_n_steps", 50),
+                        min_value=1, step=10, key="train_traj_steps",
+                    )
+        with right:
+            with st.container(border=True):
+                use_checkpoint = st.toggle(
+                    "Use Ckpt", value=trainer_defaults.get("use_checkpoint", False),
+                    key="train_use_ckpt",
+                )
+                checkpoint_epoch, checkpoint_run_id = None, None
+                if use_checkpoint:
+                    checkpoint_epoch = st.number_input(
+                        "Ckpt Epoch", value=0, min_value=0, step=1,
+                        key="train_ckpt_epoch",
+                    )
+                    checkpoint_run_id = st.text_input(
+                        "Checkpoint Run ID", key="train_ckpt_run_id",
+                    )
 
         train_config = {
             "dataset": train_dataset, "train_epoch": train_epoch, "lr": lr,
@@ -292,64 +300,67 @@ def main():
 
     test_config = {}
     if do_test:
-        with st.expander("Dataset", expanded=True):
+        st.caption("Dataset")
+        with st.container(border=True):
             test_dataset = render_dataset_section("test", dataset_defaults)
 
-        n_steps = st.number_input(
-            "N Steps", value=tester_defaults.get("n_steps") or 50,
-            min_value=1, step=10,
-        )
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            save_trajectory_test = st.toggle(
-                "Save Traj", value=tester_defaults.get("save_trajectory", False),
-                key="test_save_traj",
-            )
-        with col2:
-            analyze_trajectory_test = st.toggle(
-                "Analyze Traj", value=tester_defaults.get("analyze_trajectory", False),
-                key="test_analyze_traj",
-            )
-        with col3:
-            use_checkpoint_test = st.toggle(
-                "Use Ckpt", value=tester_defaults.get("use_checkpoint", False),
-                key="test_use_ckpt",
-            )
-        checkpoint_epoch_test, checkpoint_run_id_test = None, None
-        if use_checkpoint_test:
-            with col4:
-                checkpoint_epoch_test = st.number_input(
-                    "Ckpt Epoch", value=0, min_value=0, step=1,
-                    key="test_ckpt_epoch",
+        left, right = st.columns(2)
+        with left:
+            with st.container(border=True):
+                n_steps = st.number_input(
+                    "N Steps", value=tester_defaults.get("n_steps") or 50,
+                    min_value=1, step=10,
                 )
-            checkpoint_run_id_test = st.text_input(
-                "Checkpoint Run ID", key="test_ckpt_run_id",
-            )
-
-        analysis_temperature = tester_defaults.get("analysis_temperature", 0.1)
-        if analyze_trajectory_test:
-            analysis_temperature = st.number_input(
-                "Analysis Temperature", value=tester_defaults.get("analysis_temperature", 0.1),
-                format="%.4f", step=0.01, min_value=0.001,
-                key="test_analysis_temperature",
-                help="Softmax temperature τ for trajectory charge analysis.",
-            )
-
-        col_pcfm1, col_pcfm2 = st.columns([1, 1])
-        with col_pcfm1:
-            use_pcfm = st.toggle(
-                "PCFM Projection", value=tester_defaults.get("use_pcfm", False),
-                key="test_use_pcfm",
-            )
-        pcfm_temperature = tester_defaults.get("pcfm_temperature", 0.1)
-        if use_pcfm:
-            with col_pcfm2:
-                pcfm_temperature = st.number_input(
-                    "PCFM Temperature", value=tester_defaults.get("pcfm_temperature", 0.1),
-                    format="%.4f", step=0.01, min_value=0.001,
-                    key="test_pcfm_temperature",
+        with right:
+            with st.container(border=True):
+                save_trajectory_test = st.toggle(
+                    "Save Traj", value=tester_defaults.get("save_trajectory", False),
+                    key="test_save_traj",
                 )
+                analyze_trajectory_test = st.toggle(
+                    "Analyze Traj", value=tester_defaults.get("analyze_trajectory", False),
+                    key="test_analyze_traj",
+                )
+                analysis_temperature = tester_defaults.get("analysis_temperature", 0.1)
+                if analyze_trajectory_test:
+                    analysis_temperature = st.number_input(
+                        "Analysis Temperature",
+                        value=tester_defaults.get("analysis_temperature", 0.1),
+                        format="%.4f", step=0.01, min_value=0.001,
+                        key="test_analysis_temperature",
+                        help="Softmax temperature τ for trajectory charge analysis.",
+                    )
+
+        left, right = st.columns(2)
+        with left:
+            with st.container(border=True):
+                use_pcfm = st.toggle(
+                    "PCFM Projection", value=tester_defaults.get("use_pcfm", False),
+                    key="test_use_pcfm",
+                )
+                pcfm_temperature = tester_defaults.get("pcfm_temperature", 0.1)
+                if use_pcfm:
+                    pcfm_temperature = st.number_input(
+                        "PCFM Temperature",
+                        value=tester_defaults.get("pcfm_temperature", 0.1),
+                        format="%.4f", step=0.01, min_value=0.001,
+                        key="test_pcfm_temperature",
+                    )
+        with right:
+            with st.container(border=True):
+                use_checkpoint_test = st.toggle(
+                    "Use Ckpt", value=tester_defaults.get("use_checkpoint", False),
+                    key="test_use_ckpt",
+                )
+                checkpoint_epoch_test, checkpoint_run_id_test = None, None
+                if use_checkpoint_test:
+                    checkpoint_epoch_test = st.number_input(
+                        "Ckpt Epoch", value=0, min_value=0, step=1,
+                        key="test_ckpt_epoch",
+                    )
+                    checkpoint_run_id_test = st.text_input(
+                        "Checkpoint Run ID", key="test_ckpt_run_id",
+                    )
 
         test_config = {
             "dataset": test_dataset, "n_steps": n_steps,
