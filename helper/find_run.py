@@ -335,9 +335,9 @@ def render_run_card(run: Run, index: int):
         meta_col, action_col = st.columns([9, 1])
         with meta_col:
             st.markdown(
-                f"**Created** {format_datetime(run.created_at)} · "
-                f"**Started** {format_datetime(run.started_at)} · "
-                f"**Completed** {format_datetime(run.completed_at)} · "
+                f"**Created** `{format_datetime(run.created_at)}` · "
+                f"**Started** `{format_datetime(run.started_at)}` · "
+                f"**Completed** `{format_datetime(run.completed_at)}` · "
                 f"**Host** `{run.run_on or '-'}`"
             )
         with action_col:
@@ -394,9 +394,10 @@ def render_run_card(run: Run, index: int):
                     with c2:
                         st.markdown(f"**Save/Epoch** `{t.save_per_epoch}`")
                     with c3:
-                        traj = f"**Save Traj** `{'Yes' if t.save_trajectory else 'No'}`"
-                        if t.save_trajectory:
+                        traj = f"**Analyze Traj** `{'Yes' if t.analyze_trajectory else 'No'}`"
+                        if t.analyze_trajectory:
                             traj += f"  \n**Traj Steps** `{t.traj_n_steps}`"
+                            traj += f"  \n**Analysis Temp** `{getattr(t, 'analysis_temperature', 0.1):.4f}`"
                         st.markdown(traj)
                     with c4:
                         ckpt = f"**Checkpoint** `{'Yes' if t.use_checkpoint else 'No'}`"

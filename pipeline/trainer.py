@@ -5,10 +5,15 @@ from datetime import datetime, timezone
 
 import numpy as np
 import torch
-from ase.io import write as ase_write
 from torch.utils.data import DataLoader
 
 from db import LogEntry, Run, save_run
+from nn.charge import create_charge_module
+from pipeline.analysis import (
+    compute_step_charges,
+    finalize_and_plot_charges,
+    save_forward_trajectory,
+)
 from pipeline.flow_matching import FlowMatcher
 
 
@@ -27,47 +32,6 @@ def load_checkpoint(model: torch.nn.Module, run_id: str, epoch: int):
     return ckpt["epoch"]
 
 
-def save_forward_trajectory(
-    batch,
-    flow_matcher: FlowMatcher,
-    n_steps: int,
-    output_dir: str,
-):
-    """Save forward (noising) trajectory for a batch of samples."""
-    traj_dir = os.path.join(output_dir, "train_traj")
-    os.makedirs(traj_dir, exist_ok=True)
-
-    device = batch.get_positions().device
-    source = flow_matcher.sample_source(batch)
-    clean_positions = batch.get_positions()
-
-    batch_indices = batch.get_batch_indices()
-    t_shape = [-1] + [1] * (len(clean_positions.shape) - 1)
-
-    timesteps = np.linspace(1, 0, n_steps + 1)
-    trajectory = []
-
-    for t_val in timesteps:
-        t_atom = torch.full((batch.get_num_atoms(),), t_val, dtype=torch.float, device=device).view(t_shape)
-        flow_positions = flow_matcher.pos_path.interpolate(source, clean_positions, t_atom)
-
-        clean_emb = batch.get_element_emb()
-        noise_emb = source.get_element_emb()
-        flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
-
-        trajectory.append(batch.update_attrs(
-            positions=flow_positions,
-            element_emb=flow_el,
-            elements=flow_matcher.element_embedding.unembed(flow_el),
-        ))
-
-    for i, _ in enumerate(batch.to_samples()):
-        traj_atoms = []
-        for step_batch in trajectory:
-            traj_atoms.append(step_batch.to_samples()[i].back_to_cell().to_ase_atoms())
-        ase_write(os.path.join(traj_dir, f"{i:05d}.extxyz"), traj_atoms)
-
-
 def train(
     model: torch.nn.Module,
     flow_matcher: FlowMatcher,
@@ -79,8 +43,9 @@ def train(
     num_epochs = cfg.train_epoch
     lr = cfg.lr
     save_per_epoch = cfg.save_per_epoch
-    save_trajectory = cfg.save_trajectory
+    analyze_trajectory = cfg.analyze_trajectory
     traj_n_steps = cfg.traj_n_steps
+    analysis_temperature = getattr(cfg, 'analysis_temperature', 0.1)
     start_epoch = 0
 
     if cfg.use_checkpoint:
@@ -95,11 +60,60 @@ def train(
     output_dir = os.path.join("outputs", run.id)
     os.makedirs(output_dir, exist_ok=True)
 
-    if save_trajectory:
-        first_batch = next(iter(train_dataloader)).to(device)
-        el_emb = flow_matcher.element_embedding.embed(first_batch.get_elements())
-        first_batch = first_batch.update_attrs(element_emb=el_emb)
-        save_forward_trajectory(first_batch, flow_matcher, traj_n_steps, output_dir)
+    if analyze_trajectory:
+        # Set up charge module if available
+        charge_mod = None
+        if cfg.dataset.charge_module:
+            elements = run.model.kwargs['elements']
+            charge_mod = create_charge_module(cfg.dataset.charge_module, elements)
+            charge_mod = charge_mod.to(device)
+
+        timesteps_fwd = np.linspace(1, 0, traj_n_steps + 1)
+        if charge_mod is not None:
+            all_hard_charges = [[] for _ in range(traj_n_steps + 1)]
+            all_soft_charges = [[] for _ in range(traj_n_steps + 1)]
+
+        is_first_batch = True
+        with torch.no_grad():
+            for batch in train_dataloader:
+                batch = batch.to(device)
+                el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
+                batch = batch.update_attrs(element_emb=el_emb)
+
+                # Save trajectory files for first batch only
+                if is_first_batch:
+                    save_forward_trajectory(batch, flow_matcher, traj_n_steps, output_dir)
+                    is_first_batch = False
+
+                # Charge analysis across all batches
+                if charge_mod is not None:
+                    source = flow_matcher.sample_source(batch)
+                    clean_emb = batch.get_element_emb()
+                    noise_emb = source.get_element_emb()
+                    batch_size = batch.get_batch_size()
+                    batch_indices = batch.get_batch_indices()
+                    t_shape = [-1] + [1] * (clean_emb.dim() - 1)
+
+                    for step_idx, t_val in enumerate(timesteps_fwd):
+                        t_atom = torch.full(
+                            (batch.get_num_atoms(),), t_val,
+                            dtype=torch.float, device=device,
+                        ).view(t_shape)
+                        flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
+
+                        hard, soft = compute_step_charges(
+                            flow_el, batch_indices, batch_size,
+                            charge_mod, analysis_temperature,
+                        )
+                        all_hard_charges[step_idx].append(hard.cpu())
+                        all_soft_charges[step_idx].append(soft.cpu())
+
+        if charge_mod is not None:
+            analysis_dir = os.path.join(output_dir, "train_analysis")
+            finalize_and_plot_charges(
+                all_hard_charges, all_soft_charges, timesteps_fwd, analysis_dir,
+                title_prefix="Forward Trajectory",
+            )
 
     for epoch in range(start_epoch, num_epochs):
         epoch_start = datetime.now(timezone.utc)

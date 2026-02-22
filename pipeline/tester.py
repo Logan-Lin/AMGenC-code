@@ -9,6 +9,7 @@ from ase.io import write as ase_write
 from torch.utils.data import DataLoader
 
 from db import ResultEntry, Run, save_run
+from pipeline.analysis import compute_step_charges, finalize_and_plot_charges
 from pipeline.flow_matching import FlowMatcher
 from pipeline.trainer import load_checkpoint
 
@@ -94,20 +95,12 @@ def test(
             if analyze_trajectory and charge_mod is not None:
                 batch_size = pred_cleans[0].get_batch_size()
                 for step_idx, pc in enumerate(pred_cleans):
-                    pc_emb = pc.get_element_emb()
-                    pc_bi = pc.get_batch_indices()
-
-                    # Soft charges: apply softmax with configurable temperature
-                    soft_emb = torch.softmax(pc_emb / analysis_temperature, dim=-1)
-                    soft = charge_mod.batch_charge(soft_emb, pc_bi, batch_size)
-                    all_soft_charges[step_idx].append(soft.cpu())
-
-                    # Hard charges: argmax → one-hot → charge
-                    hard_emb = torch.nn.functional.one_hot(
-                        torch.argmax(pc_emb, dim=-1), pc_emb.shape[-1]
-                    ).float()
-                    hard = charge_mod.batch_charge(hard_emb, pc_bi, batch_size)
+                    hard, soft = compute_step_charges(
+                        pc.get_element_emb(), pc.get_batch_indices(),
+                        batch_size, charge_mod, analysis_temperature,
+                    )
                     all_hard_charges[step_idx].append(hard.cpu())
+                    all_soft_charges[step_idx].append(soft.cpu())
 
     infer_time = (datetime.now(timezone.utc) - infer_start).total_seconds()
 
@@ -116,13 +109,9 @@ def test(
     # Plot charge analysis
     if analyze_trajectory and charge_mod is not None:
         timesteps = np.linspace(0, 1, n_steps + 1)[1:]  # pred_clean at steps 1..n_steps
-        hard_charges = torch.stack([torch.cat(step) for step in all_hard_charges]).numpy()  # (n_steps, N_samples)
-        soft_charges = torch.stack([torch.cat(step) for step in all_soft_charges]).numpy()
-        analysis_dir = os.path.join(output_dir, "analysis")
-        os.makedirs(analysis_dir, exist_ok=True)
-        _plot_charge_convergence(timesteps, hard_charges, soft_charges, analysis_dir)
-        _plot_charge_per_sample(timesteps, hard_charges, analysis_dir)
-        _plot_charge_histogram(hard_charges[-1], analysis_dir)
+        analysis_dir = os.path.join(output_dir, "infer_analysis")
+        finalize_and_plot_charges(all_hard_charges, all_soft_charges, timesteps, analysis_dir,
+                                  title_prefix="Predicted Clean")
 
     run.results.append(ResultEntry(
         timestamp=datetime.now(timezone.utc),
@@ -130,92 +119,3 @@ def test(
         outputs={"num_samples": len(all_atoms)},
     ))
     save_run(run)
-
-
-def _plot_charge_convergence(timesteps, hard_charges, soft_charges, output_dir):
-    """Plot mean +/- std of estimated clean charge across samples at each step.
-
-    Args:
-        timesteps: (n_steps,) array of timestep values.
-        hard_charges: (n_steps, N_samples) array of hard (argmax) charges.
-        soft_charges: (n_steps, N_samples) array of soft (continuous) charges.
-        output_dir: directory to save the figure.
-    """
-    import matplotlib.pyplot as plt
-
-    hard_mean = hard_charges.mean(axis=1)
-    hard_std = hard_charges.std(axis=1)
-    soft_mean = soft_charges.mean(axis=1)
-    soft_std = soft_charges.std(axis=1)
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Ideal (0)')
-
-    ax.plot(timesteps, hard_mean, color='#2563eb', label='Hard (argmax)')
-    ax.fill_between(timesteps, hard_mean - hard_std, hard_mean + hard_std,
-                     color='#2563eb', alpha=0.2)
-
-    ax.plot(timesteps, soft_mean, color='#dc2626', label='Soft (continuous)')
-    ax.fill_between(timesteps, soft_mean - soft_std, soft_mean + soft_std,
-                     color='#dc2626', alpha=0.2)
-
-    ax.set_xlabel('Timestep t')
-    ax.set_ylabel('Estimated Total Charge')
-    ax.set_title('Predicted Clean Charge Convergence')
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, 'charge_convergence.pdf'))
-    plt.close(fig)
-
-
-def _plot_charge_per_sample(timesteps, hard_charges, output_dir):
-    """Plot individual sample charge trajectories.
-
-    Args:
-        timesteps: (n_steps,) array of timestep values.
-        hard_charges: (n_steps, N_samples) array of hard charges.
-        output_dir: directory to save the figure.
-    """
-    import matplotlib.pyplot as plt
-
-    n_samples = hard_charges.shape[1]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
-
-    for i in range(n_samples):
-        ax.plot(timesteps, hard_charges[:, i], alpha=0.4, linewidth=0.8)
-
-    ax.set_xlabel('Timestep t')
-    ax.set_ylabel('Estimated Total Charge')
-    ax.set_title(f'Per-Sample Charge Trajectories (n={n_samples})')
-    fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, 'charge_per_sample.pdf'))
-    plt.close(fig)
-
-
-def _plot_charge_histogram(final_charges, output_dir):
-    """Plot histogram of final sample charge values.
-
-    Args:
-        final_charges: (N_samples,) array of charge values at the last timestep.
-        output_dir: directory to save the figure.
-    """
-    import matplotlib.pyplot as plt
-
-    n_samples = len(final_charges)
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axvline(0, color='gray', linestyle='--', linewidth=0.8)
-
-    ax.hist(final_charges, bins=min(100, max(20, n_samples // 2)),
-            color='#2563eb', alpha=0.7, edgecolor='white', linewidth=0.5)
-
-    mean = final_charges.mean()
-    std = final_charges.std()
-    ax.axvline(mean, color='#dc2626', linewidth=1.5, label=f'Mean: {mean:.3f}')
-    ax.set_xlabel('Total Charge')
-    ax.set_ylabel('Count')
-    ax.set_title(f'Final Sample Charge Distribution (n={n_samples}, std={std:.3f})')
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, 'charge_histogram.pdf'))
-    plt.close(fig)

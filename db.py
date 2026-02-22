@@ -79,12 +79,15 @@ class LogEntry(EmbeddedDocument):
 
 
 class Trainer(EmbeddedDocument):
+    meta = {"strict": False}
+
     dataset = EmbeddedDocumentField(Dataset)
     train_epoch = IntField(required=True)  # Total number of epoches to train
     lr = FloatField(required=True)
     save_per_epoch = IntField(default=10)
-    save_trajectory = BooleanField(default=False)  # Whether to save forward trajectory
-    traj_n_steps = IntField(default=50)  # Number of diffusion steps to use for the forward trajectory
+    analyze_trajectory = BooleanField(default=False)  # Save forward trajectory + run charge analysis
+    traj_n_steps = IntField(default=50)  # Number of steps for forward trajectory
+    analysis_temperature = FloatField(default=0.1)  # Softmax temperature for charge analysis
     use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
     checkpoint_epoch = IntField()  # The epoch number to load from
     checkpoint_run_id = StringField()  # Load checkpoint from another run

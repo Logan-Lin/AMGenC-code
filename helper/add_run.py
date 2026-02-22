@@ -260,15 +260,23 @@ def main():
         left, right = st.columns(2)
         with left:
             with st.container(border=True):
-                save_trajectory = st.toggle(
-                    "Save Traj", value=trainer_defaults.get("save_trajectory", False),
-                    key="train_save_traj",
+                analyze_trajectory = st.toggle(
+                    "Analyze Traj", value=trainer_defaults.get("analyze_trajectory", False),
+                    key="train_analyze_traj",
                 )
                 traj_n_steps = None
-                if save_trajectory:
+                analysis_temperature = trainer_defaults.get("analysis_temperature", 0.1)
+                if analyze_trajectory:
                     traj_n_steps = st.number_input(
                         "Traj Steps", value=trainer_defaults.get("traj_n_steps", 50),
                         min_value=1, step=10, key="train_traj_steps",
+                    )
+                    analysis_temperature = st.number_input(
+                        "Analysis Temperature",
+                        value=trainer_defaults.get("analysis_temperature", 0.1),
+                        format="%.4f", step=0.01, min_value=0.001,
+                        key="train_analysis_temperature",
+                        help="Softmax temperature for forward trajectory charge analysis.",
                     )
         with right:
             with st.container(border=True):
@@ -288,8 +296,9 @@ def main():
 
         train_config = {
             "dataset": train_dataset, "train_epoch": train_epoch, "lr": lr,
-            "save_per_epoch": save_per_epoch, "save_trajectory": save_trajectory,
-            "traj_n_steps": traj_n_steps, "use_checkpoint": use_checkpoint,
+            "save_per_epoch": save_per_epoch, "analyze_trajectory": analyze_trajectory,
+            "traj_n_steps": traj_n_steps, "analysis_temperature": analysis_temperature,
+            "use_checkpoint": use_checkpoint,
             "checkpoint_epoch": checkpoint_epoch,
             "checkpoint_run_id": checkpoint_run_id,
         }
@@ -449,8 +458,9 @@ def main():
                     train_epoch=train_config["train_epoch"],
                     lr=train_config["lr"],
                     save_per_epoch=train_config["save_per_epoch"],
-                    save_trajectory=train_config["save_trajectory"],
+                    analyze_trajectory=train_config["analyze_trajectory"],
                     traj_n_steps=train_config.get("traj_n_steps"),
+                    analysis_temperature=train_config.get("analysis_temperature", 0.1),
                     use_checkpoint=train_config["use_checkpoint"],
                     checkpoint_epoch=train_config.get("checkpoint_epoch"),
                     checkpoint_run_id=train_config.get("checkpoint_run_id") or None,
