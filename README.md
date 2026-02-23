@@ -5,6 +5,7 @@
 - [x] Implement option to sample element noise from categorical distribution
 - [x] Implement optional PCFM projection step
 - [ ] Implement final discrete projection step
+- [ ] Implement optimal transportation field for elements
 
 ## BMP Dataset
 

@@ -51,24 +51,41 @@ class FlowMatcher:
 
         # Optional categorical element distribution from config
         self.element_dist = None
-        if config is not None and config.element_dist:
-            probs = torch.tensor(config.element_dist, dtype=torch.float)
-            self.element_dist = probs / probs.sum()
+        self.noise_sigma = 1.0
+        if config is not None:
+            if config.element_dist:
+                probs = torch.tensor(config.element_dist, dtype=torch.float)
+                self.element_dist = probs / probs.sum()
+            if config.noise_sigma is not None:
+                self.noise_sigma = config.noise_sigma
 
-    def _sample_element_noise(self, like_tensor):
-        """Sample element noise in embedding space.
+    def _sample_training_noise(self, clean_emb):
+        """Sample training noise with OT coupling.
+
+        If element_dist is set, centers noise at the true clean element embedding
+        (OT coupling: reduces path crossings). Otherwise scaled Gaussian.
+        """
+        sigma = self.noise_sigma
+        if self.element_dist is None:
+            return sigma * torch.randn_like(clean_emb)
+        return clean_emb + sigma * torch.randn_like(clean_emb)
+
+    def _sample_inference_noise(self, like_tensor):
+        """Sample inference noise from the marginal mixture.
 
         If element_dist is set, samples from a mixture of Gaussians centered at
-        one-hot vectors with categorical mixing weights. Otherwise standard Gaussian.
+        one-hot vectors with categorical mixing weights (matches training marginal).
+        Otherwise scaled Gaussian.
         """
+        sigma = self.noise_sigma
         if self.element_dist is None:
-            return torch.randn_like(like_tensor)
+            return sigma * torch.randn_like(like_tensor)
         n_atoms = like_tensor.shape[0]
         n_elements = like_tensor.shape[1]
         dist = self.element_dist.to(like_tensor.device)
         indices = torch.multinomial(dist.expand(n_atoms, -1), 1).squeeze(1)
         onehot = F.one_hot(indices, n_elements).float()
-        return onehot + torch.randn_like(like_tensor)
+        return onehot + sigma * torch.randn_like(like_tensor)
 
     def sample_t(self, batch) -> torch.FloatTensor:
         """Sample uniform t in [0, 1] with shape (batch_size,)."""
@@ -87,7 +104,7 @@ class FlowMatcher:
         clean_emb = sample.get_element_emb()
         if clean_emb is None:
             clean_emb = self.element_embedding.embed(sample.get_elements())
-        noise_emb = self._sample_element_noise(clean_emb)
+        noise_emb = self._sample_inference_noise(clean_emb)
         source = source.update_attrs(
             element_emb=noise_emb,
             elements=self.element_embedding.unembed(noise_emb),
@@ -118,7 +135,7 @@ class FlowMatcher:
         clean_emb = clean_batch.get_element_emb()
         if clean_emb is None:
             clean_emb = self.element_embedding.embed(clean_batch.get_elements())
-        noise_emb = self._sample_element_noise(clean_emb)
+        noise_emb = self._sample_training_noise(clean_emb)
         v_el_target = self.el_path.velocity(noise_emb, clean_emb)
         flow_el = self.el_path.interpolate(noise_emb, clean_emb, t_atom)
 
@@ -377,7 +394,7 @@ if __name__ == "__main__":
     assert torch.allclose(traj[-1].get_element_emb(), expected_final_el, atol=1e-4), "Generate final elements"
     print("5. generate trajectory OK")
 
-    # 6. Categorical element noise sampling
+    # 6. OT-coupled element noise sampling
     from db import FlowMatcherConfig
 
     # Heavy weight on O (index 1), light on others
@@ -387,16 +404,28 @@ if __name__ == "__main__":
 
     assert fm_cat.element_dist is not None, "element_dist should be set"
     assert torch.allclose(fm_cat.element_dist.sum(), torch.tensor(1.0), atol=1e-5), "element_dist should be normalized"
+    assert fm_cat.noise_sigma == 1.0, "default noise_sigma should be 1.0"
 
-    # Shape smoke test
+    # 6a. Training noise: OT-coupled (centered at clean embedding)
+    clean_emb_test = el_emb.embed(batch.get_elements())
+    training_noise = fm_cat._sample_training_noise(clean_emb_test)
+    assert training_noise.shape == clean_emb_test.shape, "Training noise shape mismatch"
+
+    # OT coupling: training noise = clean_emb + σ*ε, so the velocity target
+    # v = clean_emb - noise = -σ*ε should have zero mean (no element switching)
+    n_samples = 5000
+    dummy_clean = el_emb.embed(batch.get_elements()[:1].expand(n_samples))  # repeat one atom
+    training_samples = fm_cat._sample_training_noise(dummy_clean)
+    v_target = dummy_clean - training_samples  # should be -σ*ε, mean ~0
+    assert v_target.mean().abs() < 0.1, f"OT velocity target mean should be ~0, got {v_target.mean():.4f}"
+
+    # 6b. Inference noise: marginal mixture (biased toward O)
     dummy = torch.randn(1000, el_emb.n_elements)
-    noise = fm_cat._sample_element_noise(dummy)
-    assert noise.shape == dummy.shape, f"Shape mismatch: {noise.shape} != {dummy.shape}"
+    inf_noise = fm_cat._sample_inference_noise(dummy)
+    assert inf_noise.shape == dummy.shape, f"Shape mismatch: {inf_noise.shape} != {dummy.shape}"
 
     # Check that argmax distribution is biased toward O (index 1)
-    # With σ=1 noise on 11-dim one-hot, argmax recovery is noisy but should
-    # clearly exceed the uniform baseline of ~0.09 (1/11)
-    decoded_indices = torch.argmax(noise, dim=1)
+    decoded_indices = torch.argmax(inf_noise, dim=1)
     counts = torch.bincount(decoded_indices, minlength=el_emb.n_elements)
     o_fraction = counts[1].item() / 1000
     uniform_baseline = 1.0 / el_emb.n_elements
@@ -404,16 +433,34 @@ if __name__ == "__main__":
         f"Expected O fraction > {uniform_baseline * 1.5:.3f} (1.5x uniform), got {o_fraction}"
     )
 
+    # 6c. noise_sigma scaling
+    cfg_sigma = FlowMatcherConfig(element_dist=dist, noise_sigma=0.5)
+    fm_sigma = FlowMatcher(element_embedding=el_emb, config=cfg_sigma)
+    assert fm_sigma.noise_sigma == 0.5, "noise_sigma should be 0.5"
+
+    # With smaller sigma, training noise should be closer to clean embedding
+    train_noise_small = fm_sigma._sample_training_noise(dummy_clean)
+    residual_small = (train_noise_small - dummy_clean).norm(dim=-1).mean()
+    train_noise_large = fm_cat._sample_training_noise(dummy_clean)
+    residual_large = (train_noise_large - dummy_clean).norm(dim=-1).mean()
+    assert residual_small < residual_large, (
+        f"Smaller sigma should produce tighter noise: σ=0.5 residual={residual_small:.3f} vs σ=1.0 residual={residual_large:.3f}"
+    )
+
+    # 6d. Without element_dist: both methods produce σ * randn
+    fm_no_dist = FlowMatcher(element_embedding=el_emb)
+    assert fm_no_dist.element_dist is None
+    cfg_sigma_only = FlowMatcherConfig(noise_sigma=2.0)
+    fm_sigma_only = FlowMatcher(element_embedding=el_emb, config=cfg_sigma_only)
+    assert fm_sigma_only.element_dist is None
+    assert fm_sigma_only.noise_sigma == 2.0
+
     # Verify sample_source and compute_flow work with categorical config
     source_cat = fm_cat.sample_source(batch)
     assert source_cat.get_element_emb().shape == el_emb.embed(batch.get_elements()).shape
     flow_cat, (vp_cat, ve_cat) = fm_cat.compute_flow(batch, t)
     assert flow_cat.get_element_emb().shape == el_emb.embed(batch.get_elements()).shape
-
-    # Without config: should fall back to standard Gaussian
-    fm_default = FlowMatcher(element_embedding=el_emb)
-    assert fm_default.element_dist is None
-    print("6. Categorical element noise OK")
+    print("6. OT-coupled element noise OK")
 
     # 7. PCFM projection smoke test in generate()
     from nn.charge import create_charge_module

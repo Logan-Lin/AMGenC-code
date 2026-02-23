@@ -321,11 +321,11 @@ def render_run_card(run: Run, index: int):
     train_str = ""
     if run.do_train and run.trainer and run.trainer.dataset:
         dataset_name = Path(run.trainer.dataset.path).name if run.trainer.dataset.path else "-"
-        train_str = f"Train({dataset_name})"
+        train_str = f"Train({dataset_name}, {run.trainer.train_epoch}ep)"
     test_str = ""
     if run.do_test and run.tester and run.tester.dataset:
         dataset_name = Path(run.tester.dataset.path).name if run.tester.dataset.path else "-"
-        test_str = f"Test({dataset_name})"
+        test_str = f"Test({dataset_name}, {run.tester.n_steps}steps)"
     task_str = " | ".join(filter(None, [train_str, test_str])) or "No task"
 
     label = f"`{run.id}` | :{status_color}[{status.value}] | {run.model.name} | {task_str} | {created_str}"
@@ -378,6 +378,9 @@ def render_run_card(run: Run, index: int):
                 with st.container(border=True):
                     if run.flow_matcher and run.flow_matcher.element_dist:
                         st.markdown("**Flow Matcher**")
+                        sigma = getattr(run.flow_matcher, "noise_sigma", None)
+                        sigma_str = f"{sigma:.4f}" if sigma is not None else "1.0"
+                        st.markdown(f"Noise Sigma: `{sigma_str}`")
                         st.markdown(f"Element Distribution: `{run.flow_matcher.element_dist}`")
                     else:
                         st.markdown("**Flow Matcher** · *not configured*")
@@ -488,12 +491,37 @@ def main():
     runs = build_query(filters)
 
     # Display results
-    st.subheader(f"Results ({len(runs)} runs)")
+    page_size = 20
+    total = len(runs)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    if "page" not in st.session_state:
+        st.session_state.page = 1
+    # Clamp page to valid range
+    st.session_state.page = min(st.session_state.page, total_pages)
+
+    page = st.session_state.page
+    start = (page - 1) * page_size
+    end = min(start + page_size, total)
 
     if not runs:
+        st.subheader(f"Results (0 runs)")
         st.info("No runs match the current filters.")
     else:
-        for i, run in enumerate(runs):
+        # Header with inline pagination
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            st.subheader(f"Results ({total} runs)")
+        with c2:
+            if total_pages > 1:
+                st.number_input(
+                    "Page", min_value=1, max_value=total_pages, step=1,
+                    key="page", label_visibility="collapsed",
+                    format="%d",
+                )
+                st.caption(f"{start + 1}–{end} of {total}")
+
+        for i, run in enumerate(runs[start:end], start=start):
             render_run_card(run, i)
 
 

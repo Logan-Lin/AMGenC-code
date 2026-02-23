@@ -70,8 +70,12 @@ def train(
 
         timesteps_fwd = np.linspace(1, 0, traj_n_steps + 1)
         if charge_mod is not None:
-            all_hard_charges = [[] for _ in range(traj_n_steps + 1)]
-            all_soft_charges = [[] for _ in range(traj_n_steps + 1)]
+            # Inference noise (marginal mixture)
+            infer_hard = [[] for _ in range(traj_n_steps + 1)]
+            infer_soft = [[] for _ in range(traj_n_steps + 1)]
+            # Training noise (OT-coupled)
+            train_hard = [[] for _ in range(traj_n_steps + 1)]
+            train_soft = [[] for _ in range(traj_n_steps + 1)]
 
         is_first_batch = True
         with torch.no_grad():
@@ -87,32 +91,52 @@ def train(
 
                 # Charge analysis across all batches
                 if charge_mod is not None:
-                    source = flow_matcher.sample_source(batch)
                     clean_emb = batch.get_element_emb()
-                    noise_emb = source.get_element_emb()
                     batch_size = batch.get_batch_size()
                     batch_indices = batch.get_batch_indices()
                     t_shape = [-1] + [1] * (clean_emb.dim() - 1)
+
+                    # Inference noise path
+                    source = flow_matcher.sample_source(batch)
+                    infer_noise_emb = source.get_element_emb()
+
+                    # Training noise path (OT-coupled)
+                    train_noise_emb = flow_matcher._sample_training_noise(clean_emb)
 
                     for step_idx, t_val in enumerate(timesteps_fwd):
                         t_atom = torch.full(
                             (batch.get_num_atoms(),), t_val,
                             dtype=torch.float, device=device,
                         ).view(t_shape)
-                        flow_el = flow_matcher.el_path.interpolate(noise_emb, clean_emb, t_atom)
 
+                        # Inference noise trajectory
+                        flow_el = flow_matcher.el_path.interpolate(infer_noise_emb, clean_emb, t_atom)
                         hard, soft = compute_step_charges(
                             flow_el, batch_indices, batch_size,
                             charge_mod, analysis_temperature,
                         )
-                        all_hard_charges[step_idx].append(hard.cpu())
-                        all_soft_charges[step_idx].append(soft.cpu())
+                        infer_hard[step_idx].append(hard.cpu())
+                        infer_soft[step_idx].append(soft.cpu())
+
+                        # Training noise trajectory
+                        flow_el_train = flow_matcher.el_path.interpolate(train_noise_emb, clean_emb, t_atom)
+                        hard_t, soft_t = compute_step_charges(
+                            flow_el_train, batch_indices, batch_size,
+                            charge_mod, analysis_temperature,
+                        )
+                        train_hard[step_idx].append(hard_t.cpu())
+                        train_soft[step_idx].append(soft_t.cpu())
 
         if charge_mod is not None:
-            analysis_dir = os.path.join(output_dir, "train_analysis")
+            infer_dir = os.path.join(output_dir, "train_analysis", "inference_noise")
             finalize_and_plot_charges(
-                all_hard_charges, all_soft_charges, timesteps_fwd, analysis_dir,
-                title_prefix="Forward Trajectory",
+                infer_hard, infer_soft, timesteps_fwd, infer_dir,
+                title_prefix="Forward Trajectory (Inference Noise)",
+            )
+            train_dir = os.path.join(output_dir, "train_analysis", "training_noise")
+            finalize_and_plot_charges(
+                train_hard, train_soft, timesteps_fwd, train_dir,
+                title_prefix="Forward Trajectory (Training Noise)",
             )
 
     for epoch in range(start_epoch, num_epochs):

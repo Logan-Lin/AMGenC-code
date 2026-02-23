@@ -52,6 +52,7 @@ class FlowMatcherConfig(EmbeddedDocument):
     """Flow matching configuration."""
 
     element_dist = ListField(FloatField())  # categorical probs aligned with model element list
+    noise_sigma = FloatField(default=1.0)  # noise scale for element flow matching
 
 
 class Model(EmbeddedDocument):

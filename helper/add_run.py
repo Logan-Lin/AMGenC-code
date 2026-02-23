@@ -226,6 +226,15 @@ def main():
                     height=80,
                     key="element_dist_input",
                 )
+                noise_sigma = st.number_input(
+                    "Noise Sigma",
+                    value=1.0,
+                    format="%.4f",
+                    step=0.1,
+                    min_value=0.0,
+                    key="noise_sigma",
+                    help="Scale of Gaussian noise added to element centers. Default 1.0.",
+                )
             else:
                 st.caption("Element distribution not enabled")
 
@@ -244,7 +253,7 @@ def main():
             with col1:
                 train_epoch = st.number_input(
                     "Epochs", value=trainer_defaults.get("train_epoch") or 100,
-                    min_value=1, step=10,
+                    min_value=0, step=10,
                 )
             with col2:
                 lr = st.number_input(
@@ -485,7 +494,10 @@ def main():
             # Build FlowMatcherConfig
             fm_config = None
             if element_dist is not None:
-                fm_config = FlowMatcherConfig(element_dist=[float(v) for v in element_dist])
+                fm_config = FlowMatcherConfig(
+                    element_dist=[float(v) for v in element_dist],
+                    noise_sigma=noise_sigma,
+                )
 
             # Create Run
             run = Run(
