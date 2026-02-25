@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from db import LogEntry, Run, save_run
 from nn.charge import create_charge_module
-from pipeline.analysis import (
+from pipeline.analyzer import (
     compute_step_charges,
     finalize_and_plot_charges,
     save_forward_trajectory,
