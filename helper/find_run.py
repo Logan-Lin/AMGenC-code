@@ -48,10 +48,12 @@ def get_status_color(status: RunStatus) -> str:
 
 
 def format_datetime(dt: datetime | None) -> str:
-    """Format datetime for display."""
+    """Format datetime for display, converting UTC to local timezone."""
     if dt is None:
         return "-"
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
 @st.cache_resource
@@ -329,8 +331,19 @@ def render_run_card(run: Run, index: int):
     status = get_run_status(run)
     status_color = get_status_color(status)
 
-    # Build expander label with summary
-    created_str = run.created_at.strftime("%Y-%m-%d %H:%M") if run.created_at else "-"
+    # Pick the relevant timestamp based on status
+    if status == RunStatus.FINISHED:
+        display_dt = run.completed_at
+    elif status == RunStatus.RUNNING:
+        display_dt = run.started_at
+    else:
+        display_dt = run.created_at
+    if display_dt is not None:
+        if display_dt.tzinfo is None:
+            display_dt = display_dt.replace(tzinfo=timezone.utc)
+        time_str = display_dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    else:
+        time_str = "-"
 
     # Build train/test summary
     train_str = ""
@@ -343,7 +356,7 @@ def render_run_card(run: Run, index: int):
         test_str = f"Test({dataset_name}, {run.tester.n_steps}steps)"
     task_str = " | ".join(filter(None, [train_str, test_str])) or "No task"
 
-    label = f"`{run.id}` | :{status_color}[{status.value}] | {run.model.name} | {task_str} | {created_str}"
+    label = f"`{run.id}` | :{status_color}[{status.value}] :gray[{time_str}] | {run.model.name} | {task_str}"
 
     with st.expander(label, expanded=False):
         # Header: compact metadata line + discard button
