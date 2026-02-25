@@ -411,17 +411,28 @@ class TrajectoryAnalyzer:
 
     @torch.enable_grad()
     def _replay_pcfm_step(self, logits: torch.Tensor) -> tuple[float, float, float]:
-        """Replay one PCFM Gauss-Newton step and return (|scale|, grad_norm_sq, correction_norm)."""
+        """Replay one decoupled PCFM step and return (|scale|, grad_norm_sq, correction_norm).
+
+        Matches the actual pcfm_project implementation: Q from hard argmax,
+        gradient from softmax at self.temperature.
+        """
+        # Hard charge (exact)
+        hard_emb = F.one_hot(
+            torch.argmax(logits, dim=-1), logits.shape[-1],
+        ).float()
+        batch_indices = torch.zeros(logits.shape[0], dtype=torch.long)
+        Q_hard = self.charge_mod.batch_charge(hard_emb, batch_indices, 1)
+
+        # Soft gradient at self.temperature
         theta = logits.detach().clone().requires_grad_(True)
         soft = torch.softmax(theta / self.temperature, dim=-1)
-        batch_indices = torch.zeros(theta.shape[0], dtype=torch.long)
-        Q = self.charge_mod.batch_charge(soft, batch_indices, 1)
-        Q.sum().backward()
+        Q_soft = self.charge_mod.batch_charge(soft, batch_indices, 1)
+        Q_soft.sum().backward()
         grad = theta.grad
 
         grad_norm_sq = (grad * grad).sum().item()
         clamped = max(grad_norm_sq, 1e-12)
-        scale = Q.item() / clamped
+        scale = Q_hard.item() / clamped
         correction = abs(scale) * grad.detach().norm().item()
 
         return abs(scale), grad_norm_sq, correction

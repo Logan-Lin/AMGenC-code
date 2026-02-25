@@ -134,25 +134,35 @@ class ChargeModule(nn.Module):
     def pcfm_project(self, logits, batch_indices, batch_size, temperature=0.1):
         """PCFM Gauss-Newton projection to push total charge toward zero.
 
-        Applies one step of: θ ← θ − (Q / |∇_θ Q|²) ∇_θ Q
-        where Q = 1ᵀ softmax(θ/τ) C, independently per sample.
+        Uses decoupled hard-Q / soft-gradient: Q is the exact discrete charge
+        (from argmax one-hot), while ∇Q is computed via softmax at the given
+        temperature for well-conditioned gradients.
+
+        Applies: θ ← θ − (Q_hard / |∇_θ Q_soft|²) ∇_θ Q_soft
 
         Args:
             logits: (N_total, n_elements) element logits (pre-softmax).
             batch_indices: (N_total,) integer tensor assigning each atom to a sample.
             batch_size: Number of samples in the batch.
-            temperature: Softmax temperature τ.
+            temperature: Softmax temperature τ for gradient computation.
 
         Returns:
             (N_total, n_elements) corrected logits (detached).
         """
+        # Exact hard charge (no gradient needed)
+        hard_emb = torch.nn.functional.one_hot(
+            torch.argmax(logits, dim=-1), logits.shape[-1],
+        ).float()
+        Q_hard = self.batch_charge(hard_emb, batch_indices, batch_size)
+
+        # Soft gradient at the given temperature (well-conditioned)
         theta = logits.detach().clone().requires_grad_(True)
         soft = torch.softmax(theta / temperature, dim=-1)
-        Q = self.batch_charge(soft, batch_indices, batch_size)
-        Q.sum().backward()
+        Q_soft = self.batch_charge(soft, batch_indices, batch_size)
+        Q_soft.sum().backward()
         grad = theta.grad  # (N_total, n_elements)
 
-        # Per-sample squared gradient norm: sum of grad^2 over all atoms and elements per sample
+        # Per-sample squared gradient norm
         grad_sq_per_atom = (grad * grad).sum(dim=-1)  # (N_total,)
         grad_norm_sq = logits.new_zeros(batch_size)
         grad_norm_sq.scatter_add_(0, batch_indices, grad_sq_per_atom)  # (batch_size,)
@@ -160,8 +170,8 @@ class ChargeModule(nn.Module):
         # Clamp to avoid division by zero
         grad_norm_sq = grad_norm_sq.clamp(min=1e-12)
 
-        # Per-sample scale: Q_i / |grad_i|^2
-        scale = Q.detach() / grad_norm_sq  # (batch_size,)
+        # Scale uses hard Q (accurate) with soft gradient norm (well-conditioned)
+        scale = Q_hard.detach() / grad_norm_sq  # (batch_size,)
 
         # Apply correction: theta - scale[batch_indices] * grad
         corrected = theta.detach() - scale[batch_indices].unsqueeze(-1) * grad.detach()
