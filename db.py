@@ -95,16 +95,22 @@ class Trainer(EmbeddedDocument):
 
 
 class Tester(EmbeddedDocument):
+    meta = {"strict": False}
+
     dataset = EmbeddedDocumentField(Dataset)
     n_steps = IntField(required=True)  # Number of denoising steps
     save_trajectory = BooleanField(default=False)
-    analyze_trajectory = BooleanField(default=False)  # Run charge analysis on pred_clean at each step
+    save_index = StringField()  # ASE-style index string for per-sample logit saving, e.g. ":500"
     use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
     checkpoint_epoch = IntField()  # The epoch number to load from
     checkpoint_run_id = StringField()  # Load checkpoint from another run
     use_pcfm = BooleanField(default=False)       # Enable PCFM charge projection during inference
     pcfm_temperature = FloatField(default=0.1)    # Softmax temperature τ for PCFM projection
-    analysis_temperature = FloatField(default=0.1)  # Softmax temperature τ for trajectory charge analysis
+
+
+class Analyzer(EmbeddedDocument):
+    source_run_id = StringField()                     # Load saved logits from another run (default: current)
+    analysis_temperature = FloatField(default=0.1)    # Softmax temperature τ for soft charge computation
 
 
 class Run(Document):
@@ -124,6 +130,8 @@ class Run(Document):
     trainer = EmbeddedDocumentField(Trainer)
     do_test = BooleanField(default=False)  # Whether to run testing
     tester = EmbeddedDocumentField(Tester)
+    do_analyze = BooleanField(default=False)  # Whether to run analysis
+    analyzer = EmbeddedDocumentField(Analyzer)
 
     results = EmbeddedDocumentListField(ResultEntry)
     logs = EmbeddedDocumentListField(LogEntry)

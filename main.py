@@ -11,7 +11,7 @@ import torch
 from db import Run, connect_db, disconnect_db, save_run
 from nn import create_model
 from nn.layers import OneHotElementEmbedding
-from pipeline import FlowMatcher, train, test
+from pipeline import FlowMatcher, train, test, analyze
 from data import create_dataloader
 
 
@@ -61,6 +61,11 @@ def main() -> int:
             test_dl = create_dataloader(run.tester.dataset, device, shuffle=False)
             test(model, flow_matcher, test_dl, run, device)
             print(f"Testing completed for run {run.id}")
+
+        if getattr(run, 'do_analyze', False):
+            print(f"Starting analysis for run {run.id}")
+            analyze(run)
+            print(f"Analysis completed for run {run.id}")
 
         run.completed_at = datetime.now(timezone.utc)
         save_run(run)

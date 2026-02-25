@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 import numpy as np
 import torch
 from ase.io import write as ase_write
+from ase.io.formats import string2index
 from torch.utils.data import DataLoader
 
 from db import ResultEntry, Run, save_run
-from pipeline.analysis import compute_step_charges, finalize_and_plot_charges
 from pipeline.flow_matching import FlowMatcher
 from pipeline.trainer import load_checkpoint
 
@@ -24,7 +24,6 @@ def test(
     cfg = run.tester
     n_steps = cfg.n_steps
     save_trajectory = cfg.save_trajectory
-    analyze_trajectory = cfg.analyze_trajectory
 
     if cfg.use_checkpoint:
         ckpt_run = cfg.checkpoint_run_id if cfg.checkpoint_run_id else run.id
@@ -35,37 +34,39 @@ def test(
 
     output_dir = os.path.join("outputs", run.id)
     os.makedirs(output_dir, exist_ok=True)
-    if save_trajectory:
-        traj_dir = os.path.join(output_dir, "infer_traj")
-        os.makedirs(traj_dir, exist_ok=True)
 
-    # Set up charge module if needed (for analysis and/or PCFM projection)
+    # Set up charge module for PCFM projection and/or trajectory saving
     use_pcfm = getattr(cfg, 'use_pcfm', False)
     pcfm_temperature = getattr(cfg, 'pcfm_temperature', 0.1)
-    analysis_temperature = getattr(cfg, 'analysis_temperature', 0.1)
-    needs_charge_mod = (analyze_trajectory and cfg.dataset.charge_module) or use_pcfm
+    needs_charge_mod = use_pcfm or save_trajectory
 
     charge_mod = None
     if needs_charge_mod:
         if not cfg.dataset.charge_module:
-            raise ValueError("use_pcfm requires a charge_module to be set in the dataset config")
+            raise ValueError("save_trajectory and use_pcfm require a charge_module in the dataset config")
         from nn.charge import create_charge_module
         elements = run.model.kwargs['elements']
         charge_mod = create_charge_module(cfg.dataset.charge_module, elements)
         charge_mod = charge_mod.to(device)
 
-    if analyze_trajectory and charge_mod is not None:
-        # Per-step lists accumulating per-sample charges across all batches
-        all_hard_charges = [[] for _ in range(n_steps)]
-        all_soft_charges = [[] for _ in range(n_steps)]
+    # Trajectory data saving setup
+    if save_trajectory:
+        traj_dir = os.path.join(output_dir, "infer_traj")
+        os.makedirs(traj_dir, exist_ok=True)
+        save_index_str = cfg.save_index or ":"
+        save_index = string2index(save_index_str)
+        all_sample_logits: list[list[torch.Tensor]] = []
+        all_traj_atoms: list[list] = []  # per-sample list of ASE Atoms across steps
+        # Per-step hard charges across all batches
+        all_hard_charges: list[list[torch.Tensor]] = [[] for _ in range(n_steps)]
 
     all_atoms = []
-    is_first_batch = True
-    infer_start = datetime.now(timezone.utc)
+    infer_time = 0.0
 
     with torch.no_grad():
         for batch in test_dataloader:
             batch = batch.to(device)
+            batch_start = datetime.now(timezone.utc)
 
             # Embed elements
             el_emb = flow_matcher.element_embedding.embed(batch.get_elements())
@@ -83,35 +84,65 @@ def test(
             for s in final.to_samples():
                 all_atoms.append(s.back_to_cell().to_ase_atoms())
 
-            if save_trajectory and is_first_batch:
-                for i, _ in enumerate(final.to_samples()):
-                    traj_atoms = []
-                    for step_batch in trajectory:
-                        traj_atoms.append(step_batch.to_samples()[i].back_to_cell().to_ase_atoms())
-                    ase_write(os.path.join(traj_dir, f"{i:05d}.extxyz"), traj_atoms)
-                is_first_batch = False
+            infer_time += (datetime.now(timezone.utc) - batch_start).total_seconds()
 
-            # Accumulate charge analysis across all batches
-            if analyze_trajectory and charge_mod is not None:
+            if save_trajectory:
                 batch_size = pred_cleans[0].get_batch_size()
+
+                # Compute hard charges for ALL samples at each step
                 for step_idx, pc in enumerate(pred_cleans):
-                    hard, soft = compute_step_charges(
-                        pc.get_element_emb(), pc.get_batch_indices(),
-                        batch_size, charge_mod, analysis_temperature,
+                    el = pc.get_element_emb()
+                    hard_emb = torch.nn.functional.one_hot(
+                        torch.argmax(el, dim=-1), el.shape[-1],
+                    ).float()
+                    hard = charge_mod.batch_charge(
+                        hard_emb, pc.get_batch_indices(), batch_size,
                     )
                     all_hard_charges[step_idx].append(hard.cpu())
-                    all_soft_charges[step_idx].append(soft.cpu())
 
-    infer_time = (datetime.now(timezone.utc) - infer_start).total_seconds()
+                # Accumulate raw element logits per sample (for subset saving)
+                for local_idx in range(batch_size):
+                    logits_per_step = []
+                    for pc in pred_cleans:
+                        mask = pc.get_batch_indices() == local_idx
+                        logits_per_step.append(pc.get_element_emb()[mask].cpu())
+                    all_sample_logits.append(logits_per_step)
+
+                # Accumulate per-sample ASE trajectory atoms
+                samples_per_step = [step.to_samples() for step in trajectory]
+                for local_idx in range(batch_size):
+                    atoms_list = [
+                        samples_per_step[step_idx][local_idx].back_to_cell().to_ase_atoms()
+                        for step_idx in range(len(trajectory))
+                    ]
+                    all_traj_atoms.append(atoms_list)
 
     ase_write(os.path.join(output_dir, "generated.extxyz"), all_atoms)
 
-    # Plot charge analysis
-    if analyze_trajectory and charge_mod is not None:
-        timesteps = np.linspace(0, 1, n_steps + 1)[1:]  # pred_clean at steps 1..n_steps
-        analysis_dir = os.path.join(output_dir, "infer_analysis")
-        finalize_and_plot_charges(all_hard_charges, all_soft_charges, timesteps, analysis_dir,
-                                  title_prefix="Predicted Clean")
+    if save_trajectory:
+        # Save convergence data (all samples)
+        hard_charges = torch.stack([torch.cat(step) for step in all_hard_charges])
+        timesteps = torch.from_numpy(
+            np.linspace(0, 1, n_steps + 1)[1:].astype(np.float32)
+        )
+        torch.save(
+            {"hard_charges": hard_charges, "timesteps": timesteps},
+            os.path.join(traj_dir, "convergence.pt"),
+        )
+
+        # Save per-sample element logit and trajectory files for the selected subset
+        selected_logits = all_sample_logits[save_index]
+        if not isinstance(selected_logits, list):
+            selected_logits = [selected_logits]
+        selected_traj = all_traj_atoms[save_index]
+        if not isinstance(selected_traj, list):
+            selected_traj = [selected_traj]
+        for file_idx, (logit_list, traj_atoms) in enumerate(zip(selected_logits, selected_traj)):
+            torch.save(
+                {"element_logits": logit_list},
+                os.path.join(traj_dir, f"{file_idx:05d}.pt"),
+            )
+            ase_write(os.path.join(traj_dir, f"{file_idx:05d}.extxyz"), traj_atoms)
 
     run.results.append(ResultEntry(
         timestamp=datetime.now(timezone.utc),

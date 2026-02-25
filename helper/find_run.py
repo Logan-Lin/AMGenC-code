@@ -248,6 +248,7 @@ def build_query(filters: dict) -> list[Run]:
             Q(id=rid)
             | Q(trainer__checkpoint_run_id=rid)
             | Q(tester__checkpoint_run_id=rid)
+            | Q(analyzer__source_run_id=rid)
         )
 
     # Filter by model name
@@ -354,7 +355,10 @@ def render_run_card(run: Run, index: int):
     if run.do_test and run.tester and run.tester.dataset:
         dataset_name = Path(run.tester.dataset.path).name if run.tester.dataset.path else "-"
         test_str = f"Test({dataset_name}, {run.tester.n_steps}steps)"
-    task_str = " | ".join(filter(None, [train_str, test_str])) or "No task"
+    analyze_str = ""
+    if getattr(run, 'do_analyze', False) and run.analyzer:
+        analyze_str = f"Analyze"
+    task_str = " | ".join(filter(None, [train_str, test_str, analyze_str])) or "No task"
 
     label = f"`{run.id}` | :{status_color}[{status.value}] :gray[{time_str}] | {run.model.name} | {task_str}"
 
@@ -388,6 +392,8 @@ def render_run_card(run: Run, index: int):
             tab_names.append("Training")
         if run.do_test and run.tester:
             tab_names.append("Testing")
+        if getattr(run, 'do_analyze', False) and run.analyzer:
+            tab_names.append("Analysis")
         tab_names.append("Output")
 
         tabs = st.tabs(tab_names)
@@ -451,16 +457,14 @@ def render_run_card(run: Run, index: int):
                         st.markdown(f"**N Steps** `{t.n_steps}`")
                     with c2:
                         lines = [f"**Save Traj** `{'Yes' if t.save_trajectory else 'No'}`"]
-                        if getattr(t, "use_pcfm", False):
-                            lines.append(f"**PCFM** `Yes`  \n**PCFM Temp** `{getattr(t, 'pcfm_temperature', 0.1):.4f}`")
-                        else:
-                            lines.append("**PCFM** `No`")
+                        if t.save_trajectory:
+                            lines.append(f"**Save Index** `{getattr(t, 'save_index', None) or ':'}`")
                         st.markdown("  \n".join(lines))
                     with c3:
-                        lines = [f"**Analyze Traj** `{'Yes' if t.analyze_trajectory else 'No'}`"]
-                        if t.analyze_trajectory:
-                            lines.append(f"**Analysis Temp** `{getattr(t, 'analysis_temperature', 0.1):.4f}`")
-                        st.markdown("  \n".join(lines))
+                        if getattr(t, "use_pcfm", False):
+                            st.markdown(f"**PCFM** `Yes`  \n**PCFM Temp** `{getattr(t, 'pcfm_temperature', 0.1):.4f}`")
+                        else:
+                            st.markdown("**PCFM** `No`")
                     with c4:
                         ckpt = f"**Checkpoint** `{'Yes' if t.use_checkpoint else 'No'}`"
                         if t.use_checkpoint:
@@ -470,6 +474,19 @@ def render_run_card(run: Run, index: int):
 
                 st.caption("Dataset")
                 render_dataset_section(t.dataset)
+
+        # --- Analysis tab ---
+        if getattr(run, 'do_analyze', False) and run.analyzer:
+            with tabs[tab_idx]:
+                tab_idx += 1
+                a = run.analyzer
+                with st.container(border=True):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        src = a.source_run_id or "(current run)"
+                        st.markdown(f"**Source Run** `{src}`")
+                    with c2:
+                        st.markdown(f"**Analysis Temp** `{a.analysis_temperature:.4f}`")
 
         # --- Output tab ---
         with tabs[tab_idx]:

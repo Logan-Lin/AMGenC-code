@@ -87,31 +87,29 @@ def finalize_and_plot_charges(
     hard_charges = torch.stack([torch.cat(step) for step in all_hard_charges]).numpy()
     soft_charges = torch.stack([torch.cat(step) for step in all_soft_charges]).numpy()
     pfx = f"{title_prefix} " if title_prefix else ""
-    plot_charge_convergence(timesteps, hard_charges, soft_charges, output_dir,
-                            title=f"{pfx}Charge Convergence")
+    plot_charge_convergence(timesteps, hard_charges, output_dir,
+                            soft_charges=soft_charges, title=f"{pfx}Charge Convergence")
     plot_charge_per_sample(timesteps, hard_charges, output_dir,
                            title=f"{pfx}Per-Sample Charge Trajectories")
     plot_charge_histogram(hard_charges[-1], output_dir,
                           title=f"{pfx}Final Charge Distribution")
 
 
-def plot_charge_convergence(timesteps, hard_charges, soft_charges, output_dir,
-                            title="Charge Convergence"):
+def plot_charge_convergence(timesteps, hard_charges, output_dir,
+                            soft_charges=None, title="Charge Convergence"):
     """Plot mean +/- std of estimated clean charge across samples at each step.
 
     Args:
         timesteps: (n_steps,) array of timestep values.
         hard_charges: (n_steps, N_samples) array of hard (argmax) charges.
-        soft_charges: (n_steps, N_samples) array of soft (continuous) charges.
         output_dir: directory to save the figure.
+        soft_charges: optional (n_steps, N_samples) array of soft (continuous) charges.
         title: plot title.
     """
     import matplotlib.pyplot as plt
 
     hard_mean = hard_charges.mean(axis=1)
     hard_std = hard_charges.std(axis=1)
-    soft_mean = soft_charges.mean(axis=1)
-    soft_std = soft_charges.std(axis=1)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Ideal (0)')
@@ -120,9 +118,12 @@ def plot_charge_convergence(timesteps, hard_charges, soft_charges, output_dir,
     ax.fill_between(timesteps, hard_mean - hard_std, hard_mean + hard_std,
                      color='#2563eb', alpha=0.2)
 
-    ax.plot(timesteps, soft_mean, color='#dc2626', label='Soft (continuous)')
-    ax.fill_between(timesteps, soft_mean - soft_std, soft_mean + soft_std,
-                     color='#dc2626', alpha=0.2)
+    if soft_charges is not None:
+        soft_mean = soft_charges.mean(axis=1)
+        soft_std = soft_charges.std(axis=1)
+        ax.plot(timesteps, soft_mean, color='#dc2626', label='Soft (continuous)')
+        ax.fill_between(timesteps, soft_mean - soft_std, soft_mean + soft_std,
+                         color='#dc2626', alpha=0.2)
 
     ax.set_xlabel('Timestep t')
     ax.set_ylabel('Estimated Total Charge')

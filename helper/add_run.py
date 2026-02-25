@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import streamlit as st
 
 from db import (
+    Analyzer,
     Dataset,
     FlowMatcherConfig,
     Model,
@@ -335,18 +336,12 @@ def main():
                     "Save Traj", value=tester_defaults.get("save_trajectory", False),
                     key="test_save_traj",
                 )
-                analyze_trajectory_test = st.toggle(
-                    "Analyze Traj", value=tester_defaults.get("analyze_trajectory", False),
-                    key="test_analyze_traj",
-                )
-                analysis_temperature = tester_defaults.get("analysis_temperature", 0.1)
-                if analyze_trajectory_test:
-                    analysis_temperature = st.number_input(
-                        "Analysis Temperature",
-                        value=tester_defaults.get("analysis_temperature", 0.1),
-                        format="%.4f", step=0.01, min_value=0.001,
-                        key="test_analysis_temperature",
-                        help="Softmax temperature τ for trajectory charge analysis.",
+                save_index = ""
+                if save_trajectory_test:
+                    save_index = st.text_input(
+                        "Save Index", value=":500",
+                        key="test_save_index",
+                        help="ASE-style index for per-sample logit saving. e.g. ':500' (first 500), ':' (all).",
                     )
 
         left, right = st.columns(2)
@@ -383,13 +378,41 @@ def main():
         test_config = {
             "dataset": test_dataset, "n_steps": n_steps,
             "save_trajectory": save_trajectory_test,
-            "analyze_trajectory": analyze_trajectory_test,
+            "save_index": save_index.strip() or None,
             "use_checkpoint": use_checkpoint_test,
             "checkpoint_epoch": checkpoint_epoch_test,
             "checkpoint_run_id": checkpoint_run_id_test,
             "use_pcfm": use_pcfm,
             "pcfm_temperature": pcfm_temperature,
-            "analysis_temperature": analysis_temperature,
+        }
+
+    # Analysis Configuration
+    st.header("Analysis Configuration")
+    do_analyze = st.toggle("Enable Analysis", value=False)
+
+    analyze_config = {}
+    if do_analyze:
+        with st.container(border=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                source_run_id = st.text_input(
+                    "Source Run ID",
+                    key="analyze_source_run_id",
+                    help="Run ID to load trajectory data from. Leave empty to use current run.",
+                )
+            with col2:
+                analyzer_defaults = get_document_defaults(Analyzer)
+                analyze_temperature = st.number_input(
+                    "Analysis Temperature",
+                    value=analyzer_defaults.get("analysis_temperature", 0.1),
+                    format="%.4f", step=0.01, min_value=0.001,
+                    key="analyze_temperature",
+                    help="Softmax temperature τ for computing soft charges from raw logits.",
+                )
+
+        analyze_config = {
+            "source_run_id": source_run_id.strip() or None,
+            "analysis_temperature": analyze_temperature,
         }
 
     # Submit
@@ -428,7 +451,11 @@ def main():
             errors.append("Testing dataset path is required")
         if do_test and test_config.get("use_pcfm") and not test_config.get("dataset", {}).get("charge_module"):
             errors.append("PCFM Projection requires a Charge Module to be set in the test dataset")
-
+        if do_analyze and not analyze_config.get("source_run_id"):
+            if not do_test:
+                errors.append("Analysis without source_run_id requires Testing to be enabled")
+            elif not test_config.get("save_trajectory"):
+                errors.append("Analysis without source_run_id requires Save Trajectory to be enabled in Testing")
         # Validate properties
         for section_name, config in [("Training", train_config), ("Testing", test_config)]:
             props = config.get("dataset", {}).get("properties", [])
@@ -482,13 +509,20 @@ def main():
                     dataset=build_dataset_doc(test_config["dataset"]),
                     n_steps=test_config["n_steps"],
                     save_trajectory=test_config["save_trajectory"],
-                    analyze_trajectory=test_config["analyze_trajectory"],
+                    save_index=test_config.get("save_index"),
                     use_checkpoint=test_config["use_checkpoint"],
                     checkpoint_epoch=test_config.get("checkpoint_epoch"),
                     checkpoint_run_id=test_config.get("checkpoint_run_id") or None,
                     use_pcfm=test_config.get("use_pcfm", False),
                     pcfm_temperature=test_config.get("pcfm_temperature", 0.1),
-                    analysis_temperature=test_config.get("analysis_temperature", 0.1),
+                )
+
+            # Build Analyzer
+            analyzer = None
+            if do_analyze:
+                analyzer = Analyzer(
+                    source_run_id=analyze_config.get("source_run_id"),
+                    analysis_temperature=analyze_config.get("analysis_temperature", 0.1),
                 )
 
             # Build FlowMatcherConfig
@@ -509,6 +543,8 @@ def main():
                 trainer=trainer,
                 do_test=do_test,
                 tester=tester,
+                do_analyze=do_analyze,
+                analyzer=analyzer,
             )
 
             run.save()
