@@ -12,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
+from mongoengine import Q
+
 from db import Run, connect_db
 
 
@@ -128,6 +130,9 @@ def render_sidebar_filters() -> dict:
     """Render sidebar filters and return filter values."""
     st.sidebar.header("Filters")
 
+    # Run ID filter
+    run_id = st.sidebar.text_input("Run ID", key="run_id_filter", placeholder="Enter Run ID")
+
     # Status multiselect
     st.sidebar.subheader("Status")
     all_statuses = [s.value for s in RunStatus]
@@ -220,6 +225,7 @@ def render_sidebar_filters() -> dict:
         st.rerun()
 
     return {
+        "run_id": run_id.strip() or None,
         "statuses": selected_statuses,
         "model_names": selected_models or None,
         "epoch_range": epoch_range,
@@ -232,6 +238,15 @@ def render_sidebar_filters() -> dict:
 def build_query(filters: dict) -> list[Run]:
     """Build and execute MongoDB query based on filters."""
     queryset = Run.objects.all()
+
+    # Filter by run ID (match run itself or checkpoint references)
+    if filters["run_id"]:
+        rid = filters["run_id"]
+        queryset = queryset.filter(
+            Q(id=rid)
+            | Q(trainer__checkpoint_run_id=rid)
+            | Q(tester__checkpoint_run_id=rid)
+        )
 
     # Filter by model name
     if filters["model_names"]:

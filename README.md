@@ -4,8 +4,10 @@
 - [x] Implement dataset analysis module
 - [x] Implement option to sample element noise from categorical distribution
 - [x] Implement optional PCFM projection step
+- [ ] Implement the ghost atom
 - [ ] Implement final discrete projection step
-- [ ] Implement optimal transportation field for elements
+- [x] Implement optimal transportation field for elements
+- [ ] Explore dynamic $\tau$ and PCFM project strength approaches (with regard to $t$ or model confidence over $\theta$)
 
 ## BMP Dataset
 
