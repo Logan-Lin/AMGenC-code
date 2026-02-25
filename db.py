@@ -109,8 +109,9 @@ class Tester(EmbeddedDocument):
 
 
 class Analyzer(EmbeddedDocument):
+    meta = {"strict": False}
+
     source_run_id = StringField()                     # Load saved logits from another run (default: current)
-    analysis_temperature = FloatField(default=0.1)    # Softmax temperature τ for soft charge computation
 
 
 class Run(Document):

@@ -481,12 +481,8 @@ def render_run_card(run: Run, index: int):
                 tab_idx += 1
                 a = run.analyzer
                 with st.container(border=True):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        src = a.source_run_id or "(current run)"
-                        st.markdown(f"**Source Run** `{src}`")
-                    with c2:
-                        st.markdown(f"**Analysis Temp** `{a.analysis_temperature:.4f}`")
+                    src = a.source_run_id or "(current run)"
+                    st.markdown(f"**Source Run** `{src}`")
 
         # --- Output tab ---
         with tabs[tab_idx]:

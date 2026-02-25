@@ -215,7 +215,6 @@ class TrajectoryAnalyzer:
     def __init__(self, run: Run):
         self.run = run
         cfg = run.analyzer
-        self.temperature = cfg.analysis_temperature
 
         # Resolve source run
         source_run_id = cfg.source_run_id or run.id
@@ -225,6 +224,8 @@ class TrajectoryAnalyzer:
                 raise ValueError(f"Source run {source_run_id!r} not found")
         else:
             source_run = run
+
+        self.temperature = source_run.tester.pcfm_temperature
 
         if source_run.tester is None:
             raise ValueError(f"Source run {source_run_id} has no tester configuration")
@@ -670,7 +671,7 @@ class TrajectoryAnalyzer:
 
         metrics: dict = {
             "source_run_id": self.run.analyzer.source_run_id or self.run.id,
-            "analysis_temperature": self.temperature,
+            "pcfm_temperature": self.temperature,
             "n_total_samples": n_total,
             "n_individual_samples": self.n_samples,
             "n_balanced_samples": n_balanced,

@@ -393,26 +393,14 @@ def main():
     analyze_config = {}
     if do_analyze:
         with st.container(border=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                source_run_id = st.text_input(
-                    "Source Run ID",
-                    key="analyze_source_run_id",
-                    help="Run ID to load trajectory data from. Leave empty to use current run.",
-                )
-            with col2:
-                analyzer_defaults = get_document_defaults(Analyzer)
-                analyze_temperature = st.number_input(
-                    "Analysis Temperature",
-                    value=analyzer_defaults.get("analysis_temperature", 0.1),
-                    format="%.4f", step=0.01, min_value=0.001,
-                    key="analyze_temperature",
-                    help="Softmax temperature τ for computing soft charges from raw logits.",
-                )
+            source_run_id = st.text_input(
+                "Source Run ID",
+                key="analyze_source_run_id",
+                help="Run ID to load trajectory data from. Leave empty to use current run.",
+            )
 
         analyze_config = {
             "source_run_id": source_run_id.strip() or None,
-            "analysis_temperature": analyze_temperature,
         }
 
     # Submit
@@ -522,7 +510,6 @@ def main():
             if do_analyze:
                 analyzer = Analyzer(
                     source_run_id=analyze_config.get("source_run_id"),
-                    analysis_temperature=analyze_config.get("analysis_temperature", 0.1),
                 )
 
             # Build FlowMatcherConfig
