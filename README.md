@@ -5,7 +5,7 @@
 - [x] Implement option to sample element noise from categorical distribution
 - [x] Implement optional PCFM projection step
 - [ ] Implement the ghost atom
-- [ ] Implement final discrete projection step
+- [x] Implement final discrete projection step
 - [x] Implement optimal transportation field for elements
 - [x] Explore dynamic $\tau$ and PCFM project strength approaches (with regard to $t$ or model confidence over $\theta$)
 

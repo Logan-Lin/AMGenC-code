@@ -189,7 +189,8 @@ class FlowMatcher:
         return next_sample, pred_clean
 
     def generate(self, source_sample, n_steps, model, cond=None,
-                 charge_module=None, pcfm_temperature=0.1):
+                 charge_module=None, use_pcfm=False, pcfm_temperature=0.1,
+                 discrete_project=False):
         """Generate by integrating from t=0 to t=1.
 
         Args:
@@ -197,13 +198,18 @@ class FlowMatcher:
             n_steps: number of integration steps.
             model: velocity network.
             cond: optional condition tensor.
-            charge_module: optional ChargeModule for PCFM projection.
+            charge_module: optional ChargeModule for charge projections.
+            use_pcfm: if True, apply PCFM Gauss-Newton projection during integration.
             pcfm_temperature: softmax temperature for PCFM projection.
+            discrete_project: if True, apply final discrete DP projection at t=1.
 
         Returns:
-            (trajectory, pred_cleans): trajectory has length n_steps + 1,
-            pred_cleans has length n_steps.
+            (trajectory, pred_cleans, timing): trajectory has length n_steps + 1,
+            pred_cleans has length n_steps. timing is a dict with
+            ``pcfm_time`` and ``dp_time`` in seconds.
         """
+        import time as _time
+
         timesteps = np.linspace(0, 1, n_steps + 1)
         device = source_sample.get_positions().device
         batch_size = source_sample.get_batch_size()
@@ -211,6 +217,8 @@ class FlowMatcher:
         sample = source_sample
         trajectory = [sample]
         pred_cleans = []
+        pcfm_time = 0.0
+        dp_time = 0.0
 
         for i in range(n_steps):
             t_val = timesteps[i]
@@ -219,7 +227,8 @@ class FlowMatcher:
             sample, pred_clean = self.integrate_step(sample, t_tensor, dt, model, cond=cond)
 
             # PCFM projection: correct element logits to push charge toward zero
-            if charge_module is not None and t_val < 1.0:
+            if use_pcfm and charge_module is not None and t_val < 1.0:
+                _t0 = _time.perf_counter()
                 batch_indices = sample.get_batch_indices()
                 clean_el = pred_clean.get_element_emb()
                 corrected_el = charge_module.pcfm_project(
@@ -241,11 +250,29 @@ class FlowMatcher:
                     element_emb=corrected_el,
                     elements=self.element_embedding.unembed(corrected_el),
                 )
+                pcfm_time += _time.perf_counter() - _t0
 
             trajectory.append(sample)
             pred_cleans.append(pred_clean)
 
-        return trajectory, pred_cleans
+        # Final discrete projection: exact charge balance via DP
+        if discrete_project and charge_module is not None:
+            _t0 = _time.perf_counter()
+            final = trajectory[-1]
+            final_logits = final.get_element_emb()
+            batch_indices = final.get_batch_indices()
+            corrected_idx = charge_module.discrete_project(
+                final_logits, batch_indices, batch_size,
+            )
+            corrected_emb = F.one_hot(corrected_idx, final_logits.shape[-1]).float()
+            trajectory[-1] = final.update_attrs(
+                element_emb=corrected_emb,
+                elements=self.element_embedding.unembed(corrected_emb),
+            )
+            dp_time = _time.perf_counter() - _t0
+
+        timing = {"pcfm_time": pcfm_time, "dp_time": dp_time}
+        return trajectory, pred_cleans, timing
 
 
 if __name__ == "__main__":
@@ -380,7 +407,7 @@ if __name__ == "__main__":
     # 5. generate trajectory check
     n_steps = 5
     source_sample = fm.sample_source(batch)
-    traj, pred_cleans = fm.generate(source_sample, n_steps, mock_model)
+    traj, pred_cleans, _ = fm.generate(source_sample, n_steps, mock_model)
 
     assert len(traj) == n_steps + 1, f"Trajectory length: {len(traj)} != {n_steps + 1}"
     assert len(pred_cleans) == n_steps, f"Pred cleans length: {len(pred_cleans)} != {n_steps}"
@@ -467,19 +494,20 @@ if __name__ == "__main__":
 
     charge_mod = create_charge_module("bmp", elements)
     n_steps_pcfm = 100
-    tau_test = 0.2
+    tau_test = 0.15
     source_pcfm = fm.sample_source(batch)
 
     # Generate WITHOUT PCFM
-    traj_no_pcfm, preds_no_pcfm = fm.generate(source_pcfm, n_steps_pcfm, mock_model)
+    traj_no_pcfm, preds_no_pcfm, _ = fm.generate(source_pcfm, n_steps_pcfm, mock_model)
     final_el_no = traj_no_pcfm[-1].get_element_emb()
     soft_no = torch.softmax(final_el_no / tau_test, dim=-1)
     Q_no = charge_mod.batch_charge(soft_no, traj_no_pcfm[-1].get_batch_indices(),
                                     traj_no_pcfm[-1].get_batch_size())
 
     # Generate WITH PCFM (same source for fair comparison)
-    traj_pcfm, preds_pcfm = fm.generate(source_pcfm, n_steps_pcfm, mock_model,
-                                         charge_module=charge_mod, pcfm_temperature=tau_test)
+    traj_pcfm, preds_pcfm, timing_pcfm = fm.generate(source_pcfm, n_steps_pcfm, mock_model,
+                                                     charge_module=charge_mod, use_pcfm=True,
+                                                     pcfm_temperature=tau_test)
     final_el_yes = traj_pcfm[-1].get_element_emb()
     soft_yes = torch.softmax(final_el_yes / tau_test, dim=-1)
     Q_yes = charge_mod.batch_charge(soft_yes, traj_pcfm[-1].get_batch_indices(),
@@ -507,6 +535,33 @@ if __name__ == "__main__":
     # Positions should be identical (PCFM only affects elements)
     assert torch.allclose(traj_pcfm[-1].get_positions(), traj_no_pcfm[-1].get_positions(), atol=atol), \
         "PCFM should not affect positions"
+    assert timing_pcfm["pcfm_time"] > 0, "PCFM time should be recorded"
+    assert timing_pcfm["dp_time"] == 0.0, "DP time should be 0 when not used"
+    print(f"  PCFM timing: {timing_pcfm['pcfm_time']:.4f}s")
     print("7. PCFM projection in generate() OK")
+
+    # 8. Discrete projection smoke test in generate()
+    source_dp = fm.sample_source(batch)
+    traj_dp, preds_dp, timing_dp = fm.generate(
+        source_dp, 10, mock_model,
+        charge_module=charge_mod, discrete_project=True,
+    )
+    final_dp = traj_dp[-1]
+    final_dp_emb = final_dp.get_element_emb()
+    # After discrete projection, element_emb should be one-hot
+    assert torch.allclose(final_dp_emb, final_dp_emb.round(), atol=1e-5), \
+        "Post-DP element embeddings should be one-hot"
+    # Check formal charges are zero for all samples
+    hard_dp = final_dp_emb  # already one-hot
+    Q_dp = charge_mod.batch_formal_charge(
+        hard_dp, final_dp.get_batch_indices(), final_dp.get_batch_size(),
+    )
+    assert (Q_dp == 0).all(), f"All samples should have formal charge 0 after DP, got {Q_dp.tolist()}"
+    # pred_cleans should be unchanged (preserves original logits)
+    assert len(preds_dp) == 10
+    assert timing_dp["dp_time"] > 0, "DP time should be recorded"
+    assert timing_dp["pcfm_time"] == 0.0, "PCFM time should be 0 when not used"
+    print(f"  DP timing: {timing_dp['dp_time']:.4f}s")
+    print("8. Discrete projection in generate() OK")
 
     print("\nAll flow matching math tests PASSED")

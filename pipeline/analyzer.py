@@ -248,6 +248,12 @@ class TrajectoryAnalyzer:
         self.timesteps = convergence["timesteps"].numpy()  # (n_steps,)
         self.n_steps = self.hard_charges_all.shape[0]
 
+        # Load post-DP charges if available (optional field, backward-compatible)
+        self.post_dp_charges: np.ndarray | None = None
+        if "post_dp_charges" in convergence:
+            self.post_dp_charges = convergence["post_dp_charges"].numpy()
+        self.use_discrete_project = getattr(source_run.tester, 'use_discrete_project', False)
+
         # Create charge module
         charge_module_name = source_run.tester.dataset.charge_module
         if not charge_module_name:
@@ -279,6 +285,12 @@ class TrajectoryAnalyzer:
         self.pcfm_scales: np.ndarray | None = None        # (n_samples, n_steps)
         self.grad_norms: np.ndarray | None = None         # (n_samples, n_steps)
         self.correction_norms: np.ndarray | None = None   # (n_samples, n_steps)
+        # Discrete projection diagnostics (per-sample)
+        self.dp_pre_charges: np.ndarray | None = None     # (n_samples,) pre-DP formal charges
+        self.dp_post_charges: np.ndarray | None = None    # (n_samples,) post-DP formal charges
+        self.dp_n_swaps: np.ndarray | None = None         # (n_samples,) number of swaps
+        self.dp_total_costs: np.ndarray | None = None     # (n_samples,) total logit cost
+        self.dp_swap_details: list | None = None          # per-sample list of swap dicts
 
     def main(self):
         """Run all analyses and save results."""
@@ -288,6 +300,7 @@ class TrajectoryAnalyzer:
             self._analyze_logit_sharpness()
             self._analyze_element_switching()
             self._analyze_pcfm_internals()
+            self._analyze_discrete_projection()
             self._analyze_anomaly_correlation()
         self._save_results()
 
@@ -437,6 +450,202 @@ class TrajectoryAnalyzer:
         correction = abs(scale) * grad.detach().norm().item()
 
         return abs(scale), grad_norm_sq, correction
+
+    # ------------------------------------------------------------------
+    # Discrete projection analysis
+    # ------------------------------------------------------------------
+
+    def _analyze_discrete_projection(self):
+        """Replay DP on final-step logits and analyze swaps."""
+        if not self.use_discrete_project and self.post_dp_charges is None:
+            return
+        if self.n_samples == 0:
+            return
+
+        fc = self.charge_mod.formal_charge_vector
+        m = fc.shape[0]
+
+        pre_charges = np.zeros(self.n_samples)
+        post_charges = np.zeros(self.n_samples)
+        n_swaps_arr = np.zeros(self.n_samples, dtype=int)
+        total_costs = np.zeros(self.n_samples)
+        swap_details = []
+
+        for si, logit_list in enumerate(self.sample_logits):
+            logits = logit_list[-1]  # final step logits
+            n_atoms = logits.shape[0]
+            batch_indices = torch.zeros(n_atoms, dtype=torch.long)
+
+            # Pre-DP: argmax assignments
+            pre_idx = logits.argmax(dim=-1)
+            pre_fc = fc[pre_idx]
+            Q_pre = pre_fc.sum().item()
+            pre_charges[si] = Q_pre
+
+            # Run DP
+            corrected_idx = self.charge_mod.discrete_project(logits, batch_indices, 1)
+            post_fc = fc[corrected_idx]
+            Q_post = post_fc.sum().item()
+            post_charges[si] = Q_post
+
+            # Identify swapped atoms
+            swapped = pre_idx != corrected_idx
+            n_swaps = swapped.sum().item()
+            n_swaps_arr[si] = n_swaps
+
+            # Compute per-swap details
+            cost = 0.0
+            details = []
+            for atom_i in swapped.nonzero(as_tuple=True)[0].tolist():
+                old_el = pre_idx[atom_i].item()
+                new_el = corrected_idx[atom_i].item()
+                swap_cost = logits[atom_i, old_el].item() - logits[atom_i, new_el].item()
+                charge_delta = fc[new_el].item() - fc[old_el].item()
+                # Logit margin of the original assignment (top1 - top2)
+                top2 = torch.topk(logits[atom_i], 2).values
+                margin = (top2[0] - top2[1]).item()
+                cost += swap_cost
+                details.append({
+                    "atom": atom_i,
+                    "old_el": old_el,
+                    "new_el": new_el,
+                    "cost": swap_cost,
+                    "charge_delta": charge_delta,
+                    "margin": margin,
+                })
+            total_costs[si] = cost
+            swap_details.append(details)
+
+        self.dp_pre_charges = pre_charges
+        self.dp_post_charges = post_charges
+        self.dp_n_swaps = n_swaps_arr
+        self.dp_total_costs = total_costs
+        self.dp_swap_details = swap_details
+
+        self._plot_dp_aggregate()
+        self._plot_dp_sample_detail()
+
+    def _plot_dp_aggregate(self):
+        """Aggregate plots for discrete projection analysis."""
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        # Panel 1: Pre-DP vs Post-DP charge histograms (side by side)
+        ax = axes[0, 0]
+        bins = np.arange(
+            min(self.dp_pre_charges.min(), -1) - 0.5,
+            max(self.dp_pre_charges.max(), 1) + 1.5,
+        )
+        ax.hist(self.dp_pre_charges, bins=bins, alpha=0.7, color='#dc2626', label='Pre-DP', edgecolor='white')
+        ax.hist(self.dp_post_charges, bins=bins, alpha=0.7, color='#059669', label='Post-DP', edgecolor='white')
+        ax.axvline(0, color='gray', linestyle='--', linewidth=0.8)
+        ax.set_xlabel('Total Formal Charge')
+        ax.set_ylabel('Count')
+        ax.set_title('Charge Distribution: Pre vs Post DP')
+        ax.legend()
+
+        # Panel 2: Number of swaps per sample
+        ax = axes[0, 1]
+        max_swaps = max(int(self.dp_n_swaps.max()), 1)
+        ax.hist(self.dp_n_swaps, bins=np.arange(-0.5, max_swaps + 1.5),
+                color='#2563eb', alpha=0.7, edgecolor='white')
+        ax.set_xlabel('Number of Swaps')
+        ax.set_ylabel('Count')
+        ax.set_title(f'Swaps per Sample (mean={self.dp_n_swaps.mean():.2f})')
+
+        # Panel 3: |Q_pre| vs number of swaps
+        ax = axes[1, 0]
+        abs_Q = np.abs(self.dp_pre_charges)
+        ax.scatter(abs_Q, self.dp_n_swaps, alpha=0.4, s=15, color='#2563eb')
+        ax.set_xlabel('|Q_pre| (Formal Charge)')
+        ax.set_ylabel('Number of Swaps')
+        ax.set_title('Charge Residual vs Swap Count')
+
+        # Panel 4: |Q_pre| vs total logit cost
+        ax = axes[1, 1]
+        ax.scatter(abs_Q, self.dp_total_costs, alpha=0.4, s=15, color='#7c3aed')
+        ax.set_xlabel('|Q_pre| (Formal Charge)')
+        ax.set_ylabel('Total Logit Cost')
+        ax.set_title('Charge Residual vs Logit Cost')
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(self.output_dir, 'dp_aggregate.pdf'))
+        plt.close(fig)
+
+    def _plot_dp_sample_detail(self):
+        """Per-sample detail plots for top-5 samples by |Q_pre|."""
+        import matplotlib.pyplot as plt
+
+        abs_Q = np.abs(self.dp_pre_charges)
+        n_detail = min(5, self.n_samples)
+        # Select samples with largest |Q_pre| (most interesting)
+        worst_indices = np.argsort(abs_Q)[-n_detail:][::-1]
+        # Skip samples with no swaps
+        worst_indices = [i for i in worst_indices if self.dp_n_swaps[i] > 0]
+        if not worst_indices:
+            return
+
+        for si in worst_indices:
+            logits = self.sample_logits[si][-1]
+            pre_idx = logits.argmax(dim=-1)
+            details = self.dp_swap_details[si]
+            fc = self.charge_mod.formal_charge_vector
+
+            if not details:
+                continue
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+            # Panel 1: Atom selection scatter
+            n_atoms = logits.shape[0]
+            top2 = torch.topk(logits, 2, dim=-1).values
+            margins = (top2[:, 0] - top2[:, 1]).numpy()
+            charges = fc[pre_idx].numpy()
+
+            # All atoms
+            ax1.scatter(margins, charges, alpha=0.3, s=15, color='#94a3b8', label='Unchanged')
+
+            # Highlight swapped atoms
+            for d in details:
+                ai = d["atom"]
+                ax1.scatter(margins[ai], charges[ai], s=60, color='#dc2626',
+                            zorder=5, edgecolor='black', linewidth=0.5)
+                # Arrow showing old → new charge
+                new_charge = fc[d["new_el"]].item()
+                ax1.annotate('', xy=(margins[ai], new_charge),
+                             xytext=(margins[ai], charges[ai]),
+                             arrowprops=dict(arrowstyle='->', color='#dc2626', lw=1.5))
+
+            ax1.set_xlabel('Logit Margin (top1 - top2)')
+            ax1.set_ylabel('Formal Charge of Current Element')
+            ax1.set_title(f'Sample #{si}: Atom Selection (Q_pre={self.dp_pre_charges[si]:.0f})')
+            ax1.legend(loc='upper right')
+
+            # Panel 2: Charge waterfall
+            Q_running = self.dp_pre_charges[si]
+            positions = np.arange(len(details) + 1)
+            labels = [f'Start\nQ={Q_running:.0f}']
+            values = [Q_running]
+            colors = ['#94a3b8']
+
+            for d in details:
+                delta = d["charge_delta"]
+                Q_running += delta
+                labels.append(f'Atom {d["atom"]}\n{d["old_el"]}\u2192{d["new_el"]}\n\u0394={delta:+.0f}\ncost={d["cost"]:.2f}')
+                values.append(Q_running)
+                colors.append('#dc2626' if delta < 0 else '#2563eb')
+
+            ax2.bar(positions, values, color=colors, alpha=0.7, edgecolor='white')
+            ax2.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+            ax2.set_xticks(positions)
+            ax2.set_xticklabels(labels, fontsize=8)
+            ax2.set_ylabel('Running Formal Charge')
+            ax2.set_title(f'Charge Waterfall ({len(details)} swaps, cost={self.dp_total_costs[si]:.3f})')
+
+            fig.tight_layout()
+            fig.savefig(os.path.join(self.output_dir, f'dp_sample_{si:05d}.pdf'))
+            plt.close(fig)
 
     # ------------------------------------------------------------------
     # Anomaly correlation (synthesis)
@@ -697,6 +906,13 @@ class TrajectoryAnalyzer:
 
         if self.switch_fractions is not None:
             metrics["switch_fraction_max"] = float(self.switch_fractions.max())
+
+        if self.dp_post_charges is not None:
+            n_balanced_post_dp = int((self.dp_post_charges == 0).sum())
+            metrics["n_balanced_post_dp"] = n_balanced_post_dp
+            metrics["balanced_pct_post_dp"] = n_balanced_post_dp / max(self.n_samples, 1) * 100
+            metrics["dp_mean_swaps"] = float(self.dp_n_swaps.mean())
+            metrics["dp_mean_cost"] = float(self.dp_total_costs.mean())
 
         self.run.results.append(ResultEntry(
             timestamp=datetime.now(timezone.utc),

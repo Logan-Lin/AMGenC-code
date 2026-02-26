@@ -344,8 +344,8 @@ def main():
                         help="ASE-style index for per-sample logit saving. e.g. ':500' (first 500), ':' (all).",
                     )
 
-        left, right = st.columns(2)
-        with left:
+        c1, c2, c3 = st.columns(3)
+        with c1:
             with st.container(border=True):
                 use_pcfm = st.toggle(
                     "PCFM Projection", value=tester_defaults.get("use_pcfm", False),
@@ -359,7 +359,13 @@ def main():
                         format="%.4f", step=0.01, min_value=0.001,
                         key="test_pcfm_temperature",
                     )
-        with right:
+        with c2:
+            with st.container(border=True):
+                use_discrete_project = st.toggle(
+                    "Discrete Projection", value=tester_defaults.get("use_discrete_project", False),
+                    key="test_use_discrete_project",
+                )
+        with c3:
             with st.container(border=True):
                 use_checkpoint_test = st.toggle(
                     "Use Ckpt", value=tester_defaults.get("use_checkpoint", False),
@@ -384,6 +390,7 @@ def main():
             "checkpoint_run_id": checkpoint_run_id_test,
             "use_pcfm": use_pcfm,
             "pcfm_temperature": pcfm_temperature,
+            "use_discrete_project": use_discrete_project,
         }
 
     # Analysis Configuration
@@ -439,6 +446,8 @@ def main():
             errors.append("Testing dataset path is required")
         if do_test and test_config.get("use_pcfm") and not test_config.get("dataset", {}).get("charge_module"):
             errors.append("PCFM Projection requires a Charge Module to be set in the test dataset")
+        if do_test and test_config.get("use_discrete_project") and not test_config.get("dataset", {}).get("charge_module"):
+            errors.append("Discrete Projection requires a Charge Module to be set in the test dataset")
         if do_analyze and not analyze_config.get("source_run_id"):
             if not do_test:
                 errors.append("Analysis without source_run_id requires Testing to be enabled")
@@ -503,6 +512,7 @@ def main():
                     checkpoint_run_id=test_config.get("checkpoint_run_id") or None,
                     use_pcfm=test_config.get("use_pcfm", False),
                     pcfm_temperature=test_config.get("pcfm_temperature", 0.1),
+                    use_discrete_project=test_config.get("use_discrete_project", False),
                 )
 
             # Build Analyzer

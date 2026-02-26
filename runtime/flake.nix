@@ -46,10 +46,10 @@
             echo "All syncs completed successfully"
           '')
           (writeShellScriptBin "add-run" ''
-            streamlit run helper/add_run.py
+            streamlit run helper/add_run.py --server.port 8010 --server.headless true
           '')
           (writeShellScriptBin "find-run" ''
-            streamlit run helper/find_run.py
+            streamlit run helper/find_run.py --server.port 8011 --server.headless true
           '')
           (writeShellScriptBin "sync-analysis" ''
             set -e

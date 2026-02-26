@@ -106,6 +106,7 @@ class Tester(EmbeddedDocument):
     checkpoint_run_id = StringField()  # Load checkpoint from another run
     use_pcfm = BooleanField(default=False)
     pcfm_temperature = FloatField(default=0.1)
+    use_discrete_project = BooleanField(default=False)
 
 
 class Analyzer(EmbeddedDocument):

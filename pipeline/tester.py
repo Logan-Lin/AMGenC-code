@@ -35,10 +35,11 @@ def test(
     output_dir = os.path.join("outputs", run.id)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set up charge module for PCFM projection and/or trajectory saving
+    # Set up charge module for PCFM projection, discrete projection, and/or trajectory saving
     use_pcfm = getattr(cfg, 'use_pcfm', False)
     pcfm_temperature = getattr(cfg, 'pcfm_temperature', 0.1)
-    needs_charge_mod = use_pcfm or save_trajectory
+    use_discrete_project = getattr(cfg, 'use_discrete_project', False)
+    needs_charge_mod = use_pcfm or use_discrete_project or save_trajectory
 
     charge_mod = None
     if needs_charge_mod:
@@ -59,9 +60,13 @@ def test(
         all_traj_atoms: list[list] = []  # per-sample list of ASE Atoms across steps
         # Per-step hard charges across all batches
         all_hard_charges: list[list[torch.Tensor]] = [[] for _ in range(n_steps)]
+        # Post-DP charges (one value per sample, collected across batches)
+        all_post_dp_charges: list[torch.Tensor] = []
 
     all_atoms = []
     infer_time = 0.0
+    pcfm_time = 0.0
+    dp_time = 0.0
 
     with torch.no_grad():
         for batch in test_dataloader:
@@ -74,10 +79,11 @@ def test(
 
             cond = batch.cond
             source = flow_matcher.sample_source(batch)
-            pcfm_charge_mod = charge_mod if use_pcfm else None
-            trajectory, pred_cleans = flow_matcher.generate(
+            trajectory, pred_cleans, timing = flow_matcher.generate(
                 source, n_steps, model, cond=cond,
-                charge_module=pcfm_charge_mod, pcfm_temperature=pcfm_temperature,
+                charge_module=charge_mod,
+                use_pcfm=use_pcfm, pcfm_temperature=pcfm_temperature,
+                discrete_project=use_discrete_project,
             )
 
             final = trajectory[-1]
@@ -85,6 +91,8 @@ def test(
                 all_atoms.append(s.back_to_cell().to_ase_atoms())
 
             infer_time += (datetime.now(timezone.utc) - batch_start).total_seconds()
+            pcfm_time += timing["pcfm_time"]
+            dp_time += timing["dp_time"]
 
             if save_trajectory:
                 batch_size = pred_cleans[0].get_batch_size()
@@ -99,6 +107,14 @@ def test(
                         hard_emb, pc.get_batch_indices(), batch_size,
                     )
                     all_hard_charges[step_idx].append(hard.cpu())
+
+                # Compute post-DP charges from trajectory[-1] if DP was used
+                if use_discrete_project:
+                    final_emb = final.get_element_emb()
+                    post_dp = charge_mod.batch_charge(
+                        final_emb, final.get_batch_indices(), batch_size,
+                    )
+                    all_post_dp_charges.append(post_dp.cpu())
 
                 # Accumulate raw element logits per sample (for subset saving)
                 for local_idx in range(batch_size):
@@ -125,8 +141,13 @@ def test(
         timesteps = torch.from_numpy(
             np.linspace(0, 1, n_steps + 1)[1:].astype(np.float32)
         )
+        convergence_data = {"hard_charges": hard_charges, "timesteps": timesteps}
+
+        if use_discrete_project and all_post_dp_charges:
+            convergence_data["post_dp_charges"] = torch.cat(all_post_dp_charges)
+
         torch.save(
-            {"hard_charges": hard_charges, "timesteps": timesteps},
+            convergence_data,
             os.path.join(traj_dir, "convergence.pt"),
         )
 
@@ -144,9 +165,14 @@ def test(
             )
             ase_write(os.path.join(traj_dir, f"{file_idx:05d}.extxyz"), traj_atoms)
 
+    metrics = {"infer_time": infer_time}
+    if use_pcfm:
+        metrics["pcfm_time"] = pcfm_time
+    if use_discrete_project:
+        metrics["dp_time"] = dp_time
     run.results.append(ResultEntry(
         timestamp=datetime.now(timezone.utc),
-        metrics={"infer_time": infer_time},
+        metrics=metrics,
         outputs={"num_samples": len(all_atoms)},
     ))
     save_run(run)

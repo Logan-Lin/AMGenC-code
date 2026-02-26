@@ -461,10 +461,16 @@ def render_run_card(run: Run, index: int):
                             lines.append(f"**Save Index** `{getattr(t, 'save_index', None) or ':'}`")
                         st.markdown("  \n".join(lines))
                     with c3:
+                        lines = []
                         if getattr(t, "use_pcfm", False):
-                            st.markdown(f"**PCFM** `Yes`  \n**PCFM Temp** `{getattr(t, 'pcfm_temperature', 0.1):.4f}`")
+                            lines.append(f"**PCFM** `Yes` (\u03c4=`{getattr(t, 'pcfm_temperature', 0.1):.4f}`)")
                         else:
-                            st.markdown("**PCFM** `No`")
+                            lines.append("**PCFM** `No`")
+                        if getattr(t, "use_discrete_project", False):
+                            lines.append("**Discrete Proj** `Yes`")
+                        else:
+                            lines.append("**Discrete Proj** `No`")
+                        st.markdown("  \n".join(lines))
                     with c4:
                         ckpt = f"**Checkpoint** `{'Yes' if t.use_checkpoint else 'No'}`"
                         if t.use_checkpoint:
