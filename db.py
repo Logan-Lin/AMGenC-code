@@ -104,14 +104,14 @@ class Tester(EmbeddedDocument):
     use_checkpoint = BooleanField(default=False)  # Whether to load from checkpoint
     checkpoint_epoch = IntField()  # The epoch number to load from
     checkpoint_run_id = StringField()  # Load checkpoint from another run
-    use_pcfm = BooleanField(default=False)       # Enable PCFM charge projection during inference
-    pcfm_temperature = FloatField(default=0.1)    # Softmax temperature τ for PCFM projection
+    use_pcfm = BooleanField(default=False)
+    pcfm_temperature = FloatField(default=0.1)
 
 
 class Analyzer(EmbeddedDocument):
     meta = {"strict": False}
 
-    source_run_id = StringField()                     # Load saved logits from another run (default: current)
+    source_run_id = StringField()  # Load saved logits from another run (default: current)
 
 
 class Run(Document):

@@ -7,7 +7,7 @@
 - [ ] Implement the ghost atom
 - [ ] Implement final discrete projection step
 - [x] Implement optimal transportation field for elements
-- [ ] Explore dynamic $\tau$ and PCFM project strength approaches (with regard to $t$ or model confidence over $\theta$)
+- [x] Explore dynamic $\tau$ and PCFM project strength approaches (with regard to $t$ or model confidence over $\theta$)
 
 ## BMP Dataset
 

@@ -20,7 +20,7 @@ from db import Run, connect_db
 class RunStatus(Enum):
     """Run status derived from timestamps and message fields."""
 
-    NOT_STARTED = "Not Started"
+    NOT_STARTED = "Pending"
     RUNNING = "Running"
     FAILED = "Failed"
     FINISHED = "Finished"
@@ -40,7 +40,7 @@ def get_run_status(run: Run) -> RunStatus:
 def get_status_color(status: RunStatus) -> str:
     """Return color for status badge."""
     return {
-        RunStatus.NOT_STARTED: "gray",
+        RunStatus.NOT_STARTED: "yellow",
         RunStatus.RUNNING: "blue",
         RunStatus.FAILED: "red",
         RunStatus.FINISHED: "green",

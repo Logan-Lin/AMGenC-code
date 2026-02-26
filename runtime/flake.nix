@@ -51,6 +51,39 @@
           (writeShellScriptBin "find-run" ''
             streamlit run helper/find_run.py
           '')
+          (writeShellScriptBin "sync-analysis" ''
+            set -e
+            if [ $# -eq 0 ]; then
+              echo "Usage: sync-analysis <id1> [id2] [id3] ..."
+              exit 1
+            fi
+            if [ -z "$REMOTE_HOSTS" ]; then
+              echo "Error: REMOTE_HOSTS not set. Add it to .env (e.g., REMOTE_HOSTS=\"user@server1:/path user@server2:/path\")"
+              exit 1
+            fi
+
+            srcs=()
+            for id in "$@"; do
+              srcs+=("$id")
+            done
+
+            for host in $REMOTE_HOSTS; do
+              # Extract user@host and remote path
+              remote="''${host%%:*}"
+              rpath="''${host#*:}"
+
+              paths=()
+              for id in "''${srcs[@]}"; do
+                paths+=("$remote:$rpath/outputs/$id")
+              done
+
+              echo "Syncing from $remote..."
+              rsync -avhP "''${paths[@]}" ~/Downloads \
+                --include "*/" --include "*.pdf" --exclude "*"
+            done
+
+            echo "Done"
+          '')
         ];
         shellHook = ''
           export LD_LIBRARY_PATH="${pkgs.zlib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
