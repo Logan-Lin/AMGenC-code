@@ -16,7 +16,7 @@ import torch
 from ase.data import chemical_symbols
 from ase.io import read as ase_read
 
-from data import Sample
+from data import Sample, add_ghost_atoms_to_sample
 
 
 def load_samples(path: str) -> list[Sample]:
@@ -43,13 +43,18 @@ def load_raw_properties(path: str, n_samples: int) -> list[dict]:
     return raw_props
 
 
+def _z_to_symbol(z: int) -> str:
+    """Map atomic number to symbol, with Z=0 -> 'X' for ghost atoms."""
+    return "X" if z == 0 else chemical_symbols[z]
+
+
 def compute_element_distribution(samples: list[Sample]) -> dict[str, int]:
     """Count occurrences of each element across all samples, sorted descending."""
     counter: Counter[int] = Counter()
     for s in samples:
         counter.update(s.elements.tolist())
     return {
-        chemical_symbols[z]: count
+        _z_to_symbol(z): count
         for z, count in sorted(counter.items(), key=lambda x: x[1], reverse=True)
     }
 
@@ -90,7 +95,12 @@ def compute_property_stats(raw_props: list[dict]) -> dict[str, dict]:
     return result
 
 
-def build_report(path: str, samples: list[Sample], raw_props: list[dict]) -> str:
+def build_report(
+    path: str,
+    samples: list[Sample],
+    raw_props: list[dict],
+    ghost_samples: list[Sample] | None = None,
+) -> str:
     """Build the full analysis report as a string."""
     lines: list[str] = []
 
@@ -120,6 +130,26 @@ def build_report(path: str, samples: list[Sample], raw_props: list[dict]) -> str
     lines.append(f"  Max:  {float(densities.max()):.6f} atoms/A^3")
     lines.append("")
 
+    # Ghost atom sections
+    if ghost_samples is not None:
+        ghost_total = sum(len(s.elements) for s in ghost_samples)
+        ghost_dist = compute_element_distribution(ghost_samples)
+        lines.append("=== Element Distribution (with ghost atoms) ===")
+        lines.append(f"  {'Element':<10} {'Count':>8} {'Frequency':>10}")
+        lines.append(f"  {'-' * 10} {'-' * 8} {'-' * 10}")
+        for sym, count in ghost_dist.items():
+            freq = count / ghost_total
+            lines.append(f"  {sym:<10} {count:>8} {freq:>10.4f}")
+        lines.append("")
+
+        ghost_densities, ghost_mean, ghost_std = compute_density_stats(ghost_samples)
+        lines.append("=== Atomic Number Density (with ghost atoms) ===")
+        lines.append(f"  Mean: {ghost_mean:.6f} atoms/A^3")
+        lines.append(f"  Std:  {ghost_std:.6f} atoms/A^3")
+        lines.append(f"  Min:  {float(ghost_densities.min()):.6f} atoms/A^3")
+        lines.append(f"  Max:  {float(ghost_densities.max()):.6f} atoms/A^3")
+        lines.append("")
+
     # Property statistics
     prop_stats = compute_property_stats(raw_props)
     if prop_stats:
@@ -142,6 +172,10 @@ def build_report(path: str, samples: list[Sample], raw_props: list[dict]) -> str
 def main():
     parser = argparse.ArgumentParser(description="Analyze a MaterialDataset directory.")
     parser.add_argument("path", help="Path to the dataset directory (must contain atoms.extxyz)")
+    parser.add_argument(
+        "--max-density", type=float, default=None,
+        help="Target density (atoms/A^3). When set, report includes ghost-padded statistics.",
+    )
     args = parser.parse_args()
 
     path = args.path
@@ -152,7 +186,12 @@ def main():
 
     samples = load_samples(path)
     raw_props = load_raw_properties(path, len(samples))
-    report = build_report(path, samples, raw_props)
+
+    ghost_samples = None
+    if args.max_density is not None:
+        ghost_samples = [add_ghost_atoms_to_sample(s, args.max_density) for s in samples]
+
+    report = build_report(path, samples, raw_props, ghost_samples=ghost_samples)
 
     print(report)
 

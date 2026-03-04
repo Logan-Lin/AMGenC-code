@@ -105,6 +105,22 @@ class Sample:
         return frac_delta @ self.lattice
 
 
+def add_ghost_atoms_to_sample(sample: Sample, max_density: float) -> Sample:
+    """Pad a sample with ghost atoms (Z=0) up to the target max density."""
+    volume = abs(torch.det(sample.lattice).item())
+    n_total = int(max_density * volume)
+    n_ghost = max(0, n_total - len(sample.elements))
+    if n_ghost == 0:
+        return sample
+    ghost_elements = torch.zeros(n_ghost, dtype=torch.long)
+    ghost_frac = torch.rand(n_ghost, 3)
+    ghost_positions = ghost_frac @ sample.lattice
+    return sample.update_attrs(
+        elements=torch.cat([sample.elements, ghost_elements]),
+        positions=torch.cat([sample.positions, ghost_positions]),
+    )
+
+
 class Batch:
     """A merged batch of Samples."""
 
@@ -234,7 +250,7 @@ class Batch:
 class MaterialDataset(Dataset):
     """Dataset of material samples loaded from extxyz files with optional property JSONs."""
 
-    def __init__(self, path: str, index: str = ":", properties: list | None = None):
+    def __init__(self, path: str, index: str = ":", properties: list | None = None, max_density: float | None = None):
         super().__init__()
         atoms_file = os.path.join(path, "atoms.extxyz")
         if not os.path.isfile(atoms_file):
@@ -244,6 +260,9 @@ class MaterialDataset(Dataset):
         if not isinstance(frames, list):
             frames = [frames]
         samples: list[Sample] = [Sample.from_ase_atoms(atoms) for atoms in frames]
+
+        if max_density is not None:
+            samples = [add_ghost_atoms_to_sample(s, max_density) for s in samples]
 
         # Load and merge property JSON files, then precompute condition vectors
         json_files = sorted(glob.glob(os.path.join(path, "*.json")))
@@ -311,6 +330,7 @@ def create_dataloader(dataset_cfg, device: str, shuffle: bool = False) -> DataLo
     """
     dataset = MaterialDataset(
         path=dataset_cfg.path, index=dataset_cfg.index or ":", properties=dataset_cfg.properties,
+        max_density=getattr(dataset_cfg, "max_density", None),
     )
     collate_fn = MaterialCollateFn(device=device, init_r_cut=dataset_cfg.init_r_cut)
     return DataLoader(dataset, batch_size=dataset_cfg.batch_size, shuffle=shuffle, collate_fn=collate_fn)

@@ -46,6 +46,7 @@ class Dataset(EmbeddedDocument):
     properties = EmbeddedDocumentListField(Property)
     init_r_cut = FloatField()  # padded cutoff for neighbor list construction
     charge_module = StringField()  # charge computation module name, e.g. "bmp"
+    max_density = FloatField()  # target atoms/A^3; fills with ghost atoms (X, Z=0)
 
 
 class FlowMatcherConfig(EmbeddedDocument):

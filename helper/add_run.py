@@ -175,6 +175,18 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
         )
     charge_module = charge_module.strip() or None
 
+    col1, col2 = st.columns(2)
+    with col1:
+        use_max_density = st.toggle("Use Max Density", key=f"{prefix}_use_max_density")
+    max_density = None
+    if use_max_density:
+        with col2:
+            max_density = st.number_input(
+                "Max Density", value=0.08, format="%.6f", step=0.001,
+                key=f"{prefix}_max_density",
+                help="Target density (atoms/A^3). Fills with ghost atoms (X, Z=0).",
+            )
+
     st.divider()
     st.caption("Properties (condition normalization)")
     properties = render_properties_section(prefix)
@@ -185,6 +197,7 @@ def render_dataset_section(prefix: str, dataset_defaults: dict) -> dict:
         "batch_size": batch_size,
         "init_r_cut": init_r_cut,
         "charge_module": charge_module,
+        "max_density": max_density,
         "properties": properties,
     }
 
@@ -480,6 +493,7 @@ def main():
                     batch_size=values["batch_size"],
                     init_r_cut=values["init_r_cut"],
                     charge_module=values.get("charge_module"),
+                    max_density=values.get("max_density"),
                     properties=build_properties(values.get("properties", [])),
                 )
 

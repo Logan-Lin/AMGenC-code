@@ -205,6 +205,8 @@ class BMPChargeModule(ChargeModule):
     def _build_charge_vector(self, elements: list[str]) -> torch.Tensor:
         v = torch.zeros(len(elements))
         for i, el in enumerate(elements):
+            if el == "X":  # ghost atom, charge 0
+                continue
             bmp_idx = BMP_INV_ELEMENT_MAP[el]
             v[i] = BMP_CHARGES[bmp_idx]
         return v
@@ -212,6 +214,8 @@ class BMPChargeModule(ChargeModule):
     def _build_formal_charge_vector(self, elements: list[str]) -> torch.Tensor:
         v = torch.zeros(len(elements))
         for i, el in enumerate(elements):
+            if el == "X":  # ghost atom, charge 0
+                continue
             bmp_idx = BMP_INV_ELEMENT_MAP[el]
             v[i] = BMP_FORMAL_CHARGES[bmp_idx]
         return v

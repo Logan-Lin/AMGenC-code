@@ -302,7 +302,7 @@ def render_dataset_section(dataset):
         return
 
     with st.container(border=True):
-        c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
+        c1, c2, c3, c4, c5, c6 = st.columns([3, 1, 1, 1, 1, 1])
         with c1:
             st.markdown(f"**Path** `{dataset.path or '-'}`")
         with c2:
@@ -313,6 +313,9 @@ def render_dataset_section(dataset):
             st.markdown(f"**R Cut** `{dataset.init_r_cut or '-'}`")
         with c5:
             st.markdown(f"**Charge** `{dataset.charge_module or '-'}`")
+        with c6:
+            md = getattr(dataset, 'max_density', None)
+            st.markdown(f"**Ghost** `{md if md is not None else '-'}`")
 
         if dataset.properties:
             props_data = [
