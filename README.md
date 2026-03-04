@@ -17,3 +17,7 @@ Element distribution: [0.0825, 0.6201, 0.0198, 0.0872, 0.0194, 0.0194, 0.0193, 0
 **With ghost atoms (max_density=0.11):**
 Model element list: ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn", "X"]
 Element distribution: [0.0555, 0.4168, 0.0133, 0.0586, 0.0130, 0.0130, 0.0130, 0.0122, 0.0513, 0.0124, 0.0130, 0.3279]
+
+**With ghost atoms (max_density=0.10):**
+Model element list: ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn", "X"]
+Element distribution: [0.0610, 0.4584, 0.0146, 0.0645, 0.0143, 0.0143, 0.0143, 0.0134, 0.0565, 0.0136, 0.0143, 0.2607]

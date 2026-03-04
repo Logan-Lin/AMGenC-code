@@ -493,6 +493,18 @@ def render_run_card(run: Run, index: int):
                     src = a.source_run_id or "(current run)"
                     st.markdown(f"**Source Run** `{src}`")
 
+                    charge_parts = []
+                    if a.charge_min is not None:
+                        charge_parts.append(f"**Charge Min** `{a.charge_min}`")
+                    if a.charge_max is not None:
+                        charge_parts.append(f"**Charge Max** `{a.charge_max}`")
+                    if a.charge_dtick is not None:
+                        charge_parts.append(f"**Dtick** `{a.charge_dtick}`")
+                    if a.charge_dbin is not None:
+                        charge_parts.append(f"**Dbin** `{a.charge_dbin}`")
+                    if charge_parts:
+                        st.markdown(" · ".join(charge_parts))
+
         # --- Output tab ---
         with tabs[tab_idx]:
             logs_col, results_col = st.columns(2)

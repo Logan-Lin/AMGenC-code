@@ -14,6 +14,28 @@ from pipeline.flow_matching import FlowMatcher
 
 
 # ======================================================================
+# Charge axis helper
+# ======================================================================
+
+def _apply_charge_axis(ax, axis, charge_min=None, charge_max=None, charge_dtick=None):
+    """Apply manual limits and tick spacing to a charge axis."""
+    if charge_min is not None or charge_max is not None:
+        (ax.set_ylim if axis == 'y' else ax.set_xlim)(charge_min, charge_max)
+    if charge_dtick is not None:
+        from matplotlib.ticker import MultipleLocator
+        loc = MultipleLocator(charge_dtick)
+        (ax.yaxis if axis == 'y' else ax.xaxis).set_major_locator(loc)
+
+
+def _zero_centered_bins(lo, hi, dbin):
+    """Compute bin edges so that 0 is always at the center of a bin."""
+    import math
+    n_start = math.floor((lo + dbin / 2) / dbin)
+    n_stop = math.ceil((hi + dbin / 2) / dbin)
+    return np.arange(n_start, n_stop + 1) * dbin - dbin / 2
+
+
+# ======================================================================
 # Standalone helpers (used by trainer and other modules)
 # ======================================================================
 
@@ -87,6 +109,10 @@ def finalize_and_plot_charges(
     timesteps: np.ndarray,
     output_dir: str,
     title_prefix: str = "",
+    charge_min=None,
+    charge_max=None,
+    charge_dtick=None,
+    charge_dbin=None,
 ):
     """Stack accumulated charges and produce all analysis plots."""
     os.makedirs(output_dir, exist_ok=True)
@@ -94,11 +120,14 @@ def finalize_and_plot_charges(
     soft_charges = torch.stack([torch.cat(step) for step in all_soft_charges]).numpy()
     pfx = f"{title_prefix} " if title_prefix else ""
     plot_charge_convergence(timesteps, hard_charges, output_dir,
-                            soft_charges=soft_charges, title=f"{pfx}Charge Convergence")
+                            soft_charges=soft_charges, title=f"{pfx}Charge Convergence",
+                            charge_min=charge_min, charge_max=charge_max, charge_dtick=charge_dtick)
     plot_charge_per_sample(timesteps, hard_charges, output_dir,
-                           title=f"{pfx}Per-Sample Charge Trajectories")
+                           title=f"{pfx}Per-Sample Charge Trajectories",
+                           charge_min=charge_min, charge_max=charge_max, charge_dtick=charge_dtick)
     plot_charge_histogram(hard_charges[-1], output_dir,
-                          title=f"{pfx}Final Charge Distribution")
+                          title=f"{pfx}Final Charge Distribution",
+                          charge_min=charge_min, charge_max=charge_max, charge_dtick=charge_dtick, charge_dbin=charge_dbin)
 
 
 # ======================================================================
@@ -106,7 +135,8 @@ def finalize_and_plot_charges(
 # ======================================================================
 
 def plot_charge_convergence(timesteps, hard_charges, output_dir,
-                            soft_charges=None, title="Charge Convergence"):
+                            soft_charges=None, title="Charge Convergence",
+                            charge_min=None, charge_max=None, charge_dtick=None):
     """Plot mean +/- std of estimated clean charge across samples at each step.
 
     Args:
@@ -139,13 +169,15 @@ def plot_charge_convergence(timesteps, hard_charges, output_dir,
     ax.set_ylabel('Estimated Total Charge')
     ax.set_title(title)
     ax.legend()
+    _apply_charge_axis(ax, 'y', charge_min, charge_max, charge_dtick)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'charge_convergence.pdf'))
     plt.close(fig)
 
 
 def plot_charge_per_sample(timesteps, hard_charges, output_dir,
-                           title="Per-Sample Charge Trajectories"):
+                           title="Per-Sample Charge Trajectories",
+                           charge_min=None, charge_max=None, charge_dtick=None):
     """Plot individual sample charge trajectories.
 
     Args:
@@ -166,13 +198,15 @@ def plot_charge_per_sample(timesteps, hard_charges, output_dir,
     ax.set_xlabel('Timestep t')
     ax.set_ylabel('Estimated Total Charge')
     ax.set_title(f'{title} (n={n_samples})')
+    _apply_charge_axis(ax, 'y', charge_min, charge_max, charge_dtick)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'charge_per_sample.pdf'))
     plt.close(fig)
 
 
 def plot_charge_histogram(final_charges, output_dir,
-                          title="Final Charge Distribution"):
+                          title="Final Charge Distribution",
+                          charge_min=None, charge_max=None, charge_dtick=None, charge_dbin=None):
     """Plot histogram of final sample charge values.
 
     Args:
@@ -186,7 +220,21 @@ def plot_charge_histogram(final_charges, output_dir,
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.axvline(0, color='gray', linestyle='--', linewidth=0.8)
 
-    ax.hist(final_charges, bins=min(100, max(20, n_samples // 2)),
+    # Compute bins and range from manual controls
+    hist_kwargs = {}
+    if charge_dbin is not None:
+        lo = charge_min if charge_min is not None else final_charges.min()
+        hi = charge_max if charge_max is not None else final_charges.max()
+        hist_kwargs['bins'] = _zero_centered_bins(lo, hi, charge_dbin)
+    else:
+        hist_kwargs['bins'] = min(100, max(20, n_samples // 2))
+    if charge_min is not None or charge_max is not None:
+        hist_kwargs['range'] = (
+            charge_min if charge_min is not None else final_charges.min(),
+            charge_max if charge_max is not None else final_charges.max(),
+        )
+
+    ax.hist(final_charges, **hist_kwargs,
             color='#2563eb', alpha=0.7, edgecolor='white', linewidth=0.5)
 
     mean = final_charges.mean()
@@ -196,6 +244,7 @@ def plot_charge_histogram(final_charges, output_dir,
     ax.set_ylabel('Count')
     ax.set_title(f'{title} (n={n_samples}, std={std:.3f})')
     ax.legend()
+    _apply_charge_axis(ax, 'x', charge_min, charge_max, charge_dtick)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'charge_histogram.pdf'))
     plt.close(fig)
@@ -215,6 +264,12 @@ class TrajectoryAnalyzer:
     def __init__(self, run: Run):
         self.run = run
         cfg = run.analyzer
+
+        # Charge axis controls
+        self.charge_min = getattr(cfg, 'charge_min', None)
+        self.charge_max = getattr(cfg, 'charge_max', None)
+        self.charge_dtick = getattr(cfg, 'charge_dtick', None)
+        self.charge_dbin = getattr(cfg, 'charge_dbin', None)
 
         # Resolve source run
         source_run_id = cfg.source_run_id or run.id
@@ -312,16 +367,19 @@ class TrajectoryAnalyzer:
         plot_charge_convergence(
             self.timesteps, self.hard_charges_all, self.output_dir,
             title="Predicted Clean Charge Convergence",
+            charge_min=self.charge_min, charge_max=self.charge_max, charge_dtick=self.charge_dtick,
         )
         plot_charge_histogram(
             self.hard_charges_all[-1], self.output_dir,
             title="Final Charge Distribution",
+            charge_min=self.charge_min, charge_max=self.charge_max, charge_dtick=self.charge_dtick, charge_dbin=self.charge_dbin,
         )
         if self.n_samples > 0:
             per_sample_hard = self._compute_per_sample_hard_charges()
             plot_charge_per_sample(
                 self.timesteps, per_sample_hard, self.output_dir,
                 title="Per-Sample Charge Trajectories",
+                charge_min=self.charge_min, charge_max=self.charge_max, charge_dtick=self.charge_dtick,
             )
 
     def _compute_per_sample_hard_charges(self) -> np.ndarray:
@@ -533,10 +591,15 @@ class TrajectoryAnalyzer:
 
         # Panel 1: Pre-DP vs Post-DP charge histograms (side by side)
         ax = axes[0, 0]
-        bins = np.arange(
-            min(self.dp_pre_charges.min(), -1) - 0.5,
-            max(self.dp_pre_charges.max(), 1) + 1.5,
-        )
+        if self.charge_dbin is not None:
+            lo = self.charge_min if self.charge_min is not None else min(self.dp_pre_charges.min(), -1) - 0.5
+            hi = self.charge_max if self.charge_max is not None else max(self.dp_pre_charges.max(), 1) + 1.5
+            bins = _zero_centered_bins(lo, hi, self.charge_dbin)
+        else:
+            bins = np.arange(
+                min(self.dp_pre_charges.min(), -1) - 0.5,
+                max(self.dp_pre_charges.max(), 1) + 1.5,
+            )
         ax.hist(self.dp_pre_charges, bins=bins, alpha=0.7, color='#dc2626', label='Pre-DP', edgecolor='white')
         ax.hist(self.dp_post_charges, bins=bins, alpha=0.7, color='#059669', label='Post-DP', edgecolor='white')
         ax.axvline(0, color='gray', linestyle='--', linewidth=0.8)
@@ -544,6 +607,7 @@ class TrajectoryAnalyzer:
         ax.set_ylabel('Count')
         ax.set_title('Charge Distribution: Pre vs Post DP')
         ax.legend()
+        _apply_charge_axis(ax, 'x', self.charge_min, self.charge_max, self.charge_dtick)
 
         # Panel 2: Number of swaps per sample
         ax = axes[0, 1]
@@ -699,6 +763,7 @@ class TrajectoryAnalyzer:
         ax1.set_ylabel('Total Charge')
         ax1.set_title('Soft vs Hard Charge Gap')
         ax1.legend()
+        _apply_charge_axis(ax1, 'y', self.charge_min, self.charge_max, self.charge_dtick)
 
         ax2.plot(t, gap_mean, color='#7c3aed')
         ax2.fill_between(t, gap_mean - gap_std, gap_mean + gap_std, color='#7c3aed', alpha=0.2)

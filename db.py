@@ -114,6 +114,10 @@ class Analyzer(EmbeddedDocument):
     meta = {"strict": False}
 
     source_run_id = StringField()  # Load saved logits from another run (default: current)
+    charge_min = FloatField()  # Manual charge axis minimum
+    charge_max = FloatField()  # Manual charge axis maximum
+    charge_dtick = FloatField()  # Tick spacing for charge trajectory y-axes
+    charge_dbin = FloatField()  # Bin width for charge histograms
 
 
 class Run(Document):

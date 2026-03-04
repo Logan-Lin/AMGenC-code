@@ -419,8 +419,36 @@ def main():
                 help="Run ID to load trajectory data from. Leave empty to use current run.",
             )
 
+            use_charge_controls = st.toggle("Charge Plot Controls", value=False,
+                                            help="Set manual axis limits and tick/bin spacing for charge plots.")
+            charge_min = charge_max = charge_dtick = charge_dbin = None
+            if use_charge_controls:
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                with cc1:
+                    charge_min_input = st.number_input("Charge Min", value=None, key="charge_min",
+                                                       help="Min value for charge axes")
+                    charge_min = charge_min_input
+                with cc2:
+                    charge_max_input = st.number_input("Charge Max", value=None, key="charge_max",
+                                                       help="Max value for charge axes")
+                    charge_max = charge_max_input
+                with cc3:
+                    charge_dtick_input = st.number_input("Charge Dtick", value=None, min_value=0.0,
+                                                         key="charge_dtick",
+                                                         help="Tick spacing for trajectory y-axes")
+                    charge_dtick = charge_dtick_input if charge_dtick_input and charge_dtick_input > 0 else None
+                with cc4:
+                    charge_dbin_input = st.number_input("Charge Dbin", value=None, min_value=0.0,
+                                                        key="charge_dbin",
+                                                        help="Bin width for charge histograms")
+                    charge_dbin = charge_dbin_input if charge_dbin_input and charge_dbin_input > 0 else None
+
         analyze_config = {
             "source_run_id": source_run_id.strip() or None,
+            "charge_min": charge_min,
+            "charge_max": charge_max,
+            "charge_dtick": charge_dtick,
+            "charge_dbin": charge_dbin,
         }
 
     # Submit
@@ -534,6 +562,10 @@ def main():
             if do_analyze:
                 analyzer = Analyzer(
                     source_run_id=analyze_config.get("source_run_id"),
+                    charge_min=analyze_config.get("charge_min"),
+                    charge_max=analyze_config.get("charge_max"),
+                    charge_dtick=analyze_config.get("charge_dtick"),
+                    charge_dbin=analyze_config.get("charge_dbin"),
                 )
 
             # Build FlowMatcherConfig
