@@ -503,14 +503,20 @@ def render_run_card(run: Run, index: int):
                                 "Epoch": log.epoch if log.epoch is not None else "-",
                                 "Loss": f"{log.loss:.6f}" if log.loss is not None else "-",
                                 "Time": format_datetime(log.timestamp),
+                                "Data": "Yes" if log.data else "-",
                             }
                             for log in run.logs
                         ]
-                        st.dataframe(log_rows, width="stretch", hide_index=True)
-                        if st.checkbox("Show log data", key=f"log_data_{run.id}_{index}"):
-                            for log in run.logs:
-                                if log.data:
-                                    st.json(log.data, expanded=False)
+                        event = st.dataframe(
+                            log_rows, on_select="rerun", selection_mode="single-row",
+                            width="stretch", hide_index=True, key=f"log_table_{run.id}_{index}",
+                        )
+                        if event.selection.rows:
+                            selected_log = run.logs[event.selection.rows[0]]
+                            if selected_log.data:
+                                st.json(selected_log.data, expanded=False)
+                            else:
+                                st.caption("No data for this entry")
 
             with results_col:
                 with st.container(border=True):
