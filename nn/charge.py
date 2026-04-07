@@ -60,17 +60,6 @@ BMP_FORMAL_CHARGES = {
     36:  2,  37:  3,  38:  3,
 }
 
-BMP_CHARGES = {
-     1:  2.4,   2: -1.2,   3:  0.6,   4:  0.6,   5:  0.6,
-     6:  1.2,   7:  1.8,   8:  1.8,   9:  3.0,  10:  1.2,
-    11:  1.2,  12:  1.2,  13:  1.2,  14:  1.8,  15:  2.4,
-    16:  2.4,  17:  1.8,  18:  1.2,  19:  1.8,  20:  1.2,
-    21:  1.2,  22:  0.6,  23:  1.2,  24:  0.6,  25:  1.2,
-    26:  2.4,  27:  2.4,  28:  1.8,  29:  1.8,  30:  1.8,
-    31:  1.8,  32:  1.8,  33:  2.4,  34:  2.4,  35:  3.0,
-    36:  1.2,  37:  1.8,  38:  1.8,
-}
-
 
 class ChargeModule(nn.Module):
     """Base class for computing per-atom and per-sample charges from element embeddings.
@@ -192,26 +181,9 @@ class ChargeModule(nn.Module):
 
 
 class BMPChargeModule(ChargeModule):
-    """Charge module using BMP potential partial charges.
-
-    Also provides formal charge computation via a separate buffer.
-    """
-
-    def __init__(self, elements: list[str]):
-        super().__init__(elements)
-        formal_charge_vector = self._build_formal_charge_vector(elements)
-        self.register_buffer('formal_charge_vector', formal_charge_vector)
+    """Charge module using BMP formal charges."""
 
     def _build_charge_vector(self, elements: list[str]) -> torch.Tensor:
-        v = torch.zeros(len(elements))
-        for i, el in enumerate(elements):
-            if el == "X":  # ghost atom, charge 0
-                continue
-            bmp_idx = BMP_INV_ELEMENT_MAP[el]
-            v[i] = BMP_CHARGES[bmp_idx]
-        return v
-
-    def _build_formal_charge_vector(self, elements: list[str]) -> torch.Tensor:
         v = torch.zeros(len(elements))
         for i, el in enumerate(elements):
             if el == "X":  # ghost atom, charge 0
@@ -239,7 +211,7 @@ class BMPChargeModule(ChargeModule):
         # DP is sequential with small state tensors — run entirely on CPU
         logits = logits.cpu()
         batch_indices = batch_indices.cpu()
-        fc = self.formal_charge_vector.long().cpu()  # (m,) integer formal charges
+        fc = self.charge_vector.long().cpu()  # (m,) integer formal charges
 
         current = logits.argmax(dim=-1)  # (N_total,)
         result = current.clone()
@@ -317,17 +289,6 @@ class BMPChargeModule(ChargeModule):
 
         return result.to(orig_device)
 
-    def per_atom_formal_charge(self, element_emb: torch.Tensor) -> torch.Tensor:
-        """(N, n_elements) → (N,) per-atom formal charges."""
-        return element_emb @ self.formal_charge_vector
-
-    def batch_formal_charge(self, element_emb: torch.Tensor, batch_indices: torch.Tensor, batch_size: int) -> torch.Tensor:
-        """(N_total, n_elements), (N_total,), int → (B,) per-sample formal charges."""
-        per_atom = self.per_atom_formal_charge(element_emb)
-        result = element_emb.new_zeros(batch_size)
-        result.scatter_add_(0, batch_indices, per_atom)
-        return result
-
 
 CHARGE_MODULE_REGISTRY: dict[str, type[ChargeModule]] = {
     "bmp": BMPChargeModule,
@@ -352,7 +313,6 @@ if __name__ == "__main__":
     charge_mod = create_charge_module("bmp", elements)
 
     print("charge_vector:", charge_mod.charge_vector)
-    print("formal_charge_vector:", charge_mod.formal_charge_vector)
 
     # Load sample data
     ds = MaterialDataset("data/bmp-sample")
@@ -424,7 +384,7 @@ if __name__ == "__main__":
 
     # Test discrete_project
     print("\n--- Discrete Projection Tests ---")
-    fc = charge_mod.formal_charge_vector
+    fc = charge_mod.charge_vector
 
     # Test 1: Q != 0 → corrected to 0
     n_dp = 20

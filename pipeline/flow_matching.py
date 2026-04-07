@@ -553,7 +553,7 @@ if __name__ == "__main__":
         "Post-DP element embeddings should be one-hot"
     # Check formal charges are zero for all samples
     hard_dp = final_dp_emb  # already one-hot
-    Q_dp = charge_mod.batch_formal_charge(
+    Q_dp = charge_mod.batch_charge(
         hard_dp, final_dp.get_batch_indices(), final_dp.get_batch_size(),
     )
     assert (Q_dp == 0).all(), f"All samples should have formal charge 0 after DP, got {Q_dp.tolist()}"

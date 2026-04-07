@@ -520,7 +520,7 @@ class TrajectoryAnalyzer:
         if self.n_samples == 0:
             return
 
-        fc = self.charge_mod.formal_charge_vector
+        fc = self.charge_mod.charge_vector
         m = fc.shape[0]
 
         pre_charges = np.zeros(self.n_samples)
@@ -654,7 +654,7 @@ class TrajectoryAnalyzer:
             logits = self.sample_logits[si][-1]
             pre_idx = logits.argmax(dim=-1)
             details = self.dp_swap_details[si]
-            fc = self.charge_mod.formal_charge_vector
+            fc = self.charge_mod.charge_vector
 
             if not details:
                 continue
