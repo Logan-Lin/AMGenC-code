@@ -151,24 +151,22 @@ def plot_charge_convergence(timesteps, hard_charges, output_dir,
     hard_mean = hard_charges.mean(axis=1)
     hard_std = hard_charges.std(axis=1)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8, label='Ideal (0)')
+    fig, ax = plt.subplots(figsize=(3, 2.5))
+    ax.axhline(0, color='#928374', linestyle='--', linewidth=0.8)
 
-    ax.plot(timesteps, hard_mean, color='#2563eb', label='Hard (argmax)')
+    ax.plot(timesteps, hard_mean, color='#076678')
     ax.fill_between(timesteps, hard_mean - hard_std, hard_mean + hard_std,
-                     color='#2563eb', alpha=0.2)
+                     color='#076678', alpha=0.2)
 
     if soft_charges is not None:
         soft_mean = soft_charges.mean(axis=1)
         soft_std = soft_charges.std(axis=1)
-        ax.plot(timesteps, soft_mean, color='#dc2626', label='Soft (continuous)')
+        ax.plot(timesteps, soft_mean, color='#9d0006')
         ax.fill_between(timesteps, soft_mean - soft_std, soft_mean + soft_std,
-                         color='#dc2626', alpha=0.2)
+                         color='#9d0006', alpha=0.2)
 
     ax.set_xlabel('Timestep t')
-    ax.set_ylabel('Estimated Total Charge')
-    ax.set_title(title)
-    ax.legend()
+    ax.set_ylabel('Total Formal Charge')
     _apply_charge_axis(ax, 'y', charge_min, charge_max, charge_dtick)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'charge_convergence.pdf'))
@@ -189,15 +187,14 @@ def plot_charge_per_sample(timesteps, hard_charges, output_dir,
     import matplotlib.pyplot as plt
 
     n_samples = hard_charges.shape[1]
-    fig, ax = plt.subplots(figsize=(8, 5))
-    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    fig, ax = plt.subplots(figsize=(3, 2.5))
+    ax.axhline(0, color='#928374', linestyle='--', linewidth=0.8)
 
     for i in range(n_samples):
         ax.plot(timesteps, hard_charges[:, i], alpha=0.4, linewidth=0.8)
 
     ax.set_xlabel('Timestep t')
-    ax.set_ylabel('Estimated Total Charge')
-    ax.set_title(f'{title} (n={n_samples})')
+    ax.set_ylabel('Total Formal Charge')
     _apply_charge_axis(ax, 'y', charge_min, charge_max, charge_dtick)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, 'charge_per_sample.pdf'))
@@ -636,6 +633,19 @@ class TrajectoryAnalyzer:
         fig.tight_layout()
         fig.savefig(os.path.join(self.output_dir, 'dp_aggregate.pdf'))
         plt.close(fig)
+
+        # Standalone charge distribution comparison histogram
+        fig2, ax2 = plt.subplots(figsize=(3, 2.5))
+        ax2.hist(self.dp_pre_charges, bins=bins, alpha=0.7, color='#9d0006', label='Before DP', edgecolor='white', density=True)
+        ax2.hist(self.dp_post_charges, bins=bins, alpha=0.7, color='#427b58', label='After DP', edgecolor='white', density=True)
+        ax2.axvline(0, color='#928374', linestyle='--', linewidth=0.8)
+        ax2.set_xlabel('Total Formal Charge')
+        ax2.set_ylabel('Density')
+        ax2.legend()
+        _apply_charge_axis(ax2, 'x', self.charge_min, self.charge_max, self.charge_dtick)
+        fig2.tight_layout()
+        fig2.savefig(os.path.join(self.output_dir, 'dp_comp_hist.pdf'))
+        plt.close(fig2)
 
     def _plot_dp_sample_detail(self):
         """Per-sample detail plots for top-5 samples by |Q_pre|."""

@@ -67,6 +67,7 @@
               srcs+=("$id")
             done
 
+            failed=0
             for host in $REMOTE_HOSTS; do
               # Extract user@host and remote path
               remote="''${host%%:*}"
@@ -79,9 +80,13 @@
 
               echo "Syncing from $remote..."
               rsync -avhP "''${paths[@]}" ~/Downloads \
-                --include "*/" --include "*.pdf" --exclude "*"
+                --include "*/" --include "*.pdf" --exclude "*" || { echo "Failed syncing from $remote"; failed=1; }
             done
 
+            if [ "$failed" -eq 1 ]; then
+              echo "One or more syncs failed"
+              exit 1
+            fi
             echo "Done"
           '')
         ];
