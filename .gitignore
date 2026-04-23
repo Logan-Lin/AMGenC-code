@@ -2,4 +2,3 @@
 .direnv/
 .env
 __pycache__/
-data/

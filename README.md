@@ -1,23 +1,100 @@
-## TODO
+# AMCharge
 
-- [x] Implement add-run and find-run streamlit helpers
-- [x] Implement dataset analysis module
-- [x] Implement option to sample element noise from categorical distribution
-- [x] Implement optional PCFM projection step
-- [x] Implement the ghost atom
-- [x] Implement final discrete projection step
-- [x] Implement optimal transportation field for elements
-- [x] Explore dynamic $\tau$ and PCFM project strength approaches (with regard to $t$ or model confidence over $\theta$)
+**Amorphous Material Generation with Charge Balanced Constraint**
 
-## BMP Dataset
+AMCharge is a generative inverse design method for amorphous materials that guarantees the generation of charge balanced samples.
+It builds on conditional flow-matching with an E(n)-equivariant graph neural network (EGNN) as the velocity predictor.
 
-Model element list: ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn"]
-Element distribution: [0.0825, 0.6201, 0.0198, 0.0872, 0.0194, 0.0194, 0.0193, 0.0181, 0.0764, 0.0184, 0.0193]
+## Project Structure
 
-**With ghost atoms (max_density=0.11):**
-Model element list: ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn", "X"]
-Element distribution: [0.0555, 0.4168, 0.0133, 0.0586, 0.0130, 0.0130, 0.0130, 0.0122, 0.0513, 0.0124, 0.0130, 0.3279]
+- `main.py` - Entry point: loads a run config, trains/tests/analyzes
+- `db.py` - Experiment configuration schema ([MongoDB](https://www.mongodb.com/))
+- `data.py` - Sample, Batch, and Dataset classes; ghost atom padding
+- `nn/`
+  - `velocity_net.py` - EGNN-based velocity predictor
+  - `layers.py` - Equivariant graph convolution layers
+  - `charge.py` - Charge modules: soft projection (PCFM) and discrete projection (DP)
+- `pipeline/`
+  - `flow_matching.py` - Conditional flow-matching: flow paths, noise sampling, Euler integration
+  - `trainer.py` - Training loop with checkpoint management
+  - `tester.py` - Inference with optional charge projections
+  - `analyzer.py` - Charge trajectory analysis and visualization
+- `helper/`
+  - `add_run.py` - [Streamlit](https://streamlit.io/) GUI for creating experiment configurations
+  - `find_run.py` - Streamlit GUI for querying and inspecting results
+- `scripts/` - [Slurm](https://slurm.schedmd.com/) job submission scripts
+- `runtime/` - [Nix](https://nixos.org/) flake and [Singularity](https://sylabs.io/singularity/) container definition
 
-**With ghost atoms (max_density=0.10):**
-Model element list: ["Si", "O", "Li", "Al", "Ba", "Be", "Ca", "K", "P", "Ti", "Zn", "X"]
-Element distribution: [0.0610, 0.4584, 0.0146, 0.0645, 0.0143, 0.0143, 0.0143, 0.0134, 0.0565, 0.0136, 0.0143, 0.2607]
+## Setup
+
+### Prerequisites
+
+- Python 3.12
+- MongoDB instance (for experiment tracking)
+
+### Installation
+
+With Nix and [direnv](https://direnv.net/) (recommended), entering the project directory automatically sets up the environment.
+
+For SLURM clusters, a Singularity container definition is provided at `runtime/charge-bal.def`.
+Build the container image and place it at `runtime/charge-bal.sif`, which the job script uses to run experiments.
+
+For other environments, install dependencies manually:
+
+```sh
+uv sync
+source .venv/bin/activate
+```
+
+### Configuration
+
+Create a `.env` file with your MongoDB connection string:
+
+```
+MONGO_URI=mongodb://...
+```
+
+## Usage
+
+### 1. Create a run
+
+Launch the Streamlit GUI to configure an experiment (model architecture, dataset, training/testing parameters, charge projection settings):
+
+```sh
+add-run
+```
+
+This opens a web interface on port 8010.
+
+### 2. Execute a run
+
+```sh
+python main.py <RUN_ID>
+```
+
+On a SLURM cluster:
+
+```sh
+./scripts/job <RUN_ID>
+```
+
+### 3. Inspect results
+
+```sh
+find-run
+```
+
+This opens a web interface on port 8011 for querying runs, viewing logs, and downloading outputs.
+
+## Datasets
+
+The paper evaluates AMCharge on two datasets:
+
+- **a-SiO2**: amorphous silica samples (80-250 atoms), generated via MD simulation with the Tersoff potential.
+- **MEG**: multi-element glass samples (~800 atoms, 11 element types), generated via melt-quench with the BMP potential.
+
+A small subset of the MEG dataset is included at `data/bmp-sample/` for quick testing.
+
+Datasets are stored as ASE extended XYZ files (`atoms.extxyz`).
+Each sample is represented as a tuple of lattice, atomic positions, and element types.
+Ghost atoms are used to pad samples to a uniform density, allowing the model to control sample density without modifying the lattice or atom count.
