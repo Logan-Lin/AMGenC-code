@@ -48,11 +48,14 @@ source .venv/bin/activate
 
 ### Configuration
 
-Create a `.env` file with your MongoDB connection string:
+Copy `.env.example` to `.env` and fill in your credentials:
 
+```sh
+cp .env.example .env
 ```
-MONGO_URI=mongodb://...
-```
+
+`MONGO_URI` is the MongoDB connection string.
+`REMOTE_HOSTS` is optional, used by the `sync-remote` helper to sync the project to remote machines.
 
 ## Usage
 
