@@ -1,8 +1,8 @@
-# AMCharge
+# AMGenC
 
 **Amorphous Material Generation with Charge Balanced Constraint**
 
-AMCharge is a generative inverse design method for amorphous materials that guarantees the generation of charge balanced samples.
+AMGenC is a generative inverse design method for amorphous materials that guarantees the generation of charge balanced samples.
 It builds on conditional flow-matching with an E(n)-equivariant graph neural network (EGNN) as the velocity predictor.
 
 ## Project Structure
@@ -91,7 +91,7 @@ This opens a web interface on port 8011 for querying runs, viewing logs, and dow
 
 ## Datasets
 
-The paper evaluates AMCharge on two datasets:
+The paper evaluates AMGenC on two datasets:
 
 - **a-SiO2**: amorphous silica samples (80-250 atoms), generated via MD simulation with the Tersoff potential.
 - **MEG**: multi-element glass samples (~800 atoms, 11 element types), generated via melt-quench with the BMP potential.
